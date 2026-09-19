@@ -213,6 +213,8 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
+
       - uses: actions/download-artifact@v4
         with:
           name: FinanceRanker-setup
@@ -221,6 +223,11 @@ jobs:
       - name: Publish the installer
         env:
           GH_TOKEN: ${{ github.token }}
+          # `gh` needs a repository to talk to. This job does not touch the
+          # source, so without the checkout it has no git remote to infer it
+          # from ("fatal: not a git repository"); GH_REPO makes that explicit
+          # rather than relying on the clone.
+          GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
           ls -la dist
