@@ -37,6 +37,34 @@ foreach ($t in @("test_engine","test_preview","test_sectors","test_scale","test_
     if ($LASTEXITCODE -ne 0) { throw "$t failed" }
 }
 
+# ---- the browser that ships inside the app
+# ---- Windows does not use pywebview: its backend needs pythonnet, which cannot
+# ---- load from a frozen bundle. The app drives its own Chromium instead, so it
+# ---- depends on nothing the target machine may or may not have.
+Write-Host "`n-- staging the bundled browser" -ForegroundColor Cyan
+$ProgressPreference = "SilentlyContinue"
+if (Test-Path "vendor\chromium\chrome.exe") {
+    Write-Host "already staged, skipping download"
+} else {
+    $meta = Invoke-RestMethod "https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions-with-downloads.json"
+    $stable = $meta.channels.Stable
+    $url = ($stable.downloads.chrome | Where-Object { $_.platform -eq "win64" }).url
+    if (-not $url) { throw "could not resolve a win64 Chrome for Testing URL" }
+    Write-Host "Chrome for Testing $($stable.version)"
+    Write-Host "downloading $url (about 200 MB)"
+    $zip = Join-Path $env:TEMP "chrome-win64.zip"
+    # curl.exe rather than Invoke-WebRequest: ~200 MB, and IWR's progress
+    # rendering makes it several times slower.
+    curl.exe -L --fail --retry 3 -o $zip $url
+    if ($LASTEXITCODE -ne 0) { throw "browser download failed (curl exit $LASTEXITCODE)" }
+    Expand-Archive -Path $zip -DestinationPath $env:TEMP -Force
+    New-Item -ItemType Directory -Force -Path "vendor\chromium" | Out-Null
+    Copy-Item "$env:TEMP\chrome-win64\*" "vendor\chromium\" -Recurse -Force
+    if (-not (Test-Path "vendor\chromium\chrome.exe")) { throw "chrome.exe was not staged" }
+}
+$mb = (Get-ChildItem "vendor\chromium" -Recurse -File | Measure-Object Length -Sum).Sum / 1MB
+Write-Host ("staged Chromium: {0:N1} MB" -f $mb) -ForegroundColor Green
+
 # ---- build
 Write-Host "`n-- building with PyInstaller" -ForegroundColor Cyan
 python -m PyInstaller --clean --noconfirm finance_ranker.spec
@@ -49,6 +77,12 @@ Write-Host "`n-- smoke-testing the packaged app" -ForegroundColor Cyan
 $env:FR_DATA_DIR = Join-Path $env:TEMP "frdata-smoke"
 $env:FR_SCHEDULE_HOURS = "0"
 Remove-Item -Recurse -Force $env:FR_DATA_DIR -ErrorAction SilentlyContinue
+
+# --no-window never touches the window layer, so assert it separately.
+$self = Start-Process -FilePath "dist\FinanceRanker\FinanceRanker.exe" -ArgumentList "--selftest" -PassThru -Wait
+if ($self.ExitCode -ne 0) { throw "selftest failed (exit $($self.ExitCode))" }
+Write-Host "window layer present" -ForegroundColor Green
+
 $proc = Start-Process -FilePath "dist\FinanceRanker\FinanceRanker.exe" -ArgumentList "--no-window" -PassThru
 try {
     $port = $null

@@ -28,4 +28,8 @@ apscheduler>=3.10
 # ---- Packaging (optional: build a standalone desktop app) ----
 # See finance_ranker.spec and README §7.5
 pyinstaller>=6.10
-pywebview>=5.3
+# Desktop window. Windows does not use pywebview at all -- the packaged app
+# drives the Chromium bundled into the build -- so pythonnet, whose
+# Python.Runtime.dll cannot be loaded from a frozen bundle, is never pulled in
+# there. macOS keeps pywebview (WKWebView), which has no such dependency.
+pywebview>=5.3; sys_platform != "win32"

@@ -20,6 +20,10 @@ dist/
 
 *.spec.bak
 
+# Vendored browser staged by the build (see .github/workflows/build.yml and
+# windows/build.ps1); ~350 MB, never committed.
+vendor/
+
 # OS / editor
 .DS_Store
 .idea/

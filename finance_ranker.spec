@@ -32,6 +32,15 @@ datas += collect_data_files("curl_cffi")
 binaries = collect_dynamic_libs("py_mini_racer")
 datas += collect_data_files("py_mini_racer")
 
+# Windows ships its own Chromium, so the packaged app is self-contained: it
+# needs neither the machine's WebView2/Edge nor pythonnet. The build stages the
+# browser into vendor/chromium (see .github/workflows/build.yml and
+# windows/build.ps1); building without it still works and simply falls back to
+# whatever browser the system has.
+CHROMIUM_DIR = ROOT / "vendor" / "chromium"
+if sys.platform == "win32" and CHROMIUM_DIR.is_dir():
+    datas.append((str(CHROMIUM_DIR), "chromium"))
+
 hiddenimports = [
     "uvicorn.logging",
     "uvicorn.loops.auto",
@@ -48,23 +57,22 @@ hiddenimports = [
     "apscheduler.jobstores.memory",
     "pydantic_settings",
     "py_mini_racer",
-    "webview",
 ]
-# pywebview picks its backend by platform; only the local one is importable, so
-# the others are added defensively (harmless if absent on this OS).
+# pywebview picks its backend by platform; Windows does not use it at all (see
+# below), so only the backends for the platforms that do are pulled in.
 import sys as _sys
 
 if _sys.platform == "darwin":
-    hiddenimports += ["webview.platforms.cocoa"]
+    hiddenimports += ["webview", "webview.platforms.cocoa"]
 elif _sys.platform == "win32":
-    hiddenimports += [
-        "webview.platforms.winforms",
-        "clr",              # pythonnet, required by the WinForms backend
-        "clr_loader",
-        "pythonnet",
-    ]
+    # No pywebview on Windows: desktop.py runs the bundled Chromium as a
+    # subprocess instead. The WinForms backend needs pythonnet, whose
+    # Python.Runtime.dll cannot be resolved from a frozen bundle
+    # ("Failed to resolve Python.Runtime.Loader.Initialize"), so the entire
+    # .NET bridge is left out rather than shipped broken.
+    pass
 else:
-    hiddenimports += ["webview.platforms.gtk"]
+    hiddenimports += ["webview", "webview.platforms.gtk"]
 # akshare resolves many providers by name at call time.
 hiddenimports += collect_submodules("akshare")
 
@@ -73,6 +81,11 @@ excludes = [
     "tkinter", "PyQt5", "PyQt6", "PySide2", "PySide6", "matplotlib",
     "IPython", "jupyter", "notebook", "pytest", "PyInstaller",
 ]
+if sys.platform == "win32":
+    # Belt and braces: desktop.py still contains the (unreachable on Windows)
+    # pywebview import, so without this PyInstaller's static analysis would pull
+    # pythonnet back in.
+    excludes += ["webview", "clr", "clr_loader", "pythonnet"]
 
 block_cipher = None
 

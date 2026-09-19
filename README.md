@@ -394,14 +394,27 @@ PYINSTALLER_CONFIG_DIR=/tmp/pyi_cache pyinstaller --clean --noconfirm finance_ra
 open dist/FinanceRanker.app          # macOS；Windows/Linux 用 dist/FinanceRanker/ 里的可执行文件
 ```
 
-**没有捆绑 Chromium。** 窗口用操作系统自带的 webview（macOS 是 WKWebView，
-Windows 是 WebView2，Linux 是 WebKitGTK），而不是内嵌一份浏览器。原因：
+**窗口层按平台分流，因为只有 Windows 有这个坑：**
 
-- **体积**：当前产物 **149 MB**；内嵌 Chromium 会再加 ~150 MB，直接翻倍。
-- **职责**：这里的浏览器只是个壳，真正的数据抓取全在 Python 侧（requests / curl_cffi），
-  多一份浏览器引擎对取数没有任何帮助。
-- **一致性**：WKWebView 与 Safari 同源、WebView2 与 Edge 同源，
-  用户机器上已经有并且会持续更新，不用我们维护。
+| 平台 | 窗口 | 是否内嵌浏览器 |
+|---|---|---|
+| macOS | pywebview → 系统 WKWebView | 否，产物约 150 MB |
+| Windows | **内嵌 Chromium**（Chrome for Testing 官方便携版），以 `--app=` 打开 | 是，产物约 400 MB |
+
+Windows 之所以不再走 pywebview：它的 WinForms 后端必须经 **pythonnet** 去调 .NET，
+而打包成 exe 之后 pythonnet 加载不了 `Python.Runtime.dll`：
+
+```
+RuntimeError: Failed to resolve Python.Runtime.Loader.Initialize
+             from ...\_internal\pythonnet\runtime\Python.Runtime.dll
+```
+
+这个故障**只在冻结包里出现**——源码运行、CI 的 `--no-window` 冒烟测试都完全正常，
+所以第一版发了出去，用户双击才炸。与其去赌一套 .NET 互操作桥，不如自己带浏览器：
+Windows 版现在不依赖 WebView2，也不依赖用户装过 Edge/Chrome。
+
+代价是体积。相比之下，抓取全在 Python 侧（requests / curl_cffi），
+整个 Python 运行时也才 60 MB——多出来的 300 多 MB 全是浏览器引擎。
 
 **冻结后与源码运行的关键差异**（都已处理）：
 
@@ -412,8 +425,15 @@ Windows 是 WebView2，Linux 是 WebKitGTK），而不是内嵌一份浏览器�
 | `py_mini_racer` 的原生库 | 必须 `collect_dynamic_libs`，否则 akshare 取价全部报 "Native library or dependency not available" |
 | 无控制台看不到日志 | 冻结时写 `launcher.log` 到数据目录 |
 | 端口被占用 | 优先 8848，占用则退到随机空闲端口，窗口指向实际端口 |
+| Windows 的窗口层 | 内嵌 Chromium 用 `--app=` 拉起；找不到或拉起失败则回退系统默认浏览器，**窗口层永远不会弄崩应用** |
 
-调试用参数：`--no-window`（只起服务，供无人值守验证）、`--browser`（用默认浏览器打开）。
+调试用参数：
+
+| 参数 | 作用 |
+|---|---|
+| `--no-window` | 只起服务，供无人值守验证（不碰窗口层） |
+| `--selftest` | 校验窗口层真的在包里（Windows 上缺 Chromium 就以退出码 2 失败），构建时用它把关 |
+| `--browser` | 强制用系统默认浏览器打开，跳过内嵌 Chromium |
 
 ## 7.55 Windows 安装包（.exe）
 
@@ -439,8 +459,9 @@ git push -u origin main
 | `FinanceRanker-windows` | 免安装的绿色版目录（整个 `dist/FinanceRanker/`） |
 | `FinanceRanker-macos` | macOS 的 `.app` |
 
-工作流在打包**之前**会跑全部测试，打包**之后**会做冒烟测试
-（启动冻结的应用 → 等它报出端口 → 校验 `/api/health` 与首页 200），
+工作流在打包**之前**会跑全部测试、并把 Chrome for Testing（win64）下载到
+`vendor/chromium/` 供打包内嵌；打包**之后**会先跑一次 `--selftest` 确认窗口层真的进了包，
+再做冒烟测试（启动冻结的应用 → 等它报出端口 → 校验 `/api/health` 与首页 200），
 所以"能下载"等于"能跑"。
 
 ### 路线 B：在 Windows 上本地构建
@@ -467,18 +488,21 @@ winget install -e --id JRSoftware.InnoSetup
   仓库自带 → 编译器自带 → 仅英文。
 - **默认按用户安装**（`PrivilegesRequired=lowest`），不弹 UAC；也可在对话框切到全机器安装
 - 开始菜单 + 可选桌面快捷方式，卸载项齐全
-- **WebView2 按需下载**：Windows 11 / 已更新的 Win10 自带；缺失时才用
-  Inno 的 `download` + `external` 机制**在安装时下载**官方 bootstrapper
-  （见 [Inno [Files] 文档](https://jrsoftware.org/is6help/topic_filessection.htm)），
-  因此构建机不需要联网，已装运行时的用户也不会白下
-- **卸载不删用户数据**：快照与缓存留在 `%LOCALAPPDATA%\FinanceRanker`，重装不丢
+- **安装时不联网**：应用自带 Chromium，所以既不需要 WebView2 运行时，
+  也不再需要 Inno 的 `download` + `external` 在安装时去拉 bootstrapper
+  （那套逻辑已随内嵌浏览器一起删掉）
+- **卸载不删用户数据**：快照、缓存与浏览器 profile 留在 `%LOCALAPPDATA%\FinanceRanker`，重装不丢
 
-### 为什么发行版不内嵌 Chromium
+### 为什么 Windows 内嵌 Chromium，而 macOS 不内嵌
 
-窗口用系统自带 WebView2（macOS 用 WKWebView），产物约 **150 MB**；
-内嵌 Chromium 会再加 ~150 MB 直接翻倍，而抓取全在 Python 侧，
-多一份浏览器引擎对取数没有任何帮助。若窗口因缺 WebView2 起不来，
-`FinanceRanker.exe --browser` 会用默认浏览器打开同一个本地服务，作为兜底。
+不是"想不想"的问题，是 pywebview 在 Windows 上必须过 pythonnet 这道桥，
+而这道桥在冻结包里是坏的（见 §7.5 的报错）。所以 Windows 的选项只有两个：
+**自己带浏览器**，或者**赌用户机器上的 WebView2**。选了前者，代价是 ~300 MB。
+
+macOS 的 WKWebView 走 Objective-C 桥，没有这层 .NET 互操作，一直很稳，就继续保持轻量。
+若内嵌 Chromium 因故起不来（被杀软拦、被策略禁），
+`FinanceRanker.exe --browser` 会用系统默认浏览器打开同一个本地服务作为兜底——
+代码路径上它会**自动**兜底，不需要用户加参数。
 
 ## 7.6 数据源探测（"任何环境都能用"的真相）
 
@@ -584,6 +608,12 @@ API：`GET /api/providers`（读缓存）、`POST /api/providers/probe`（强制
       翻译，而且 CI 用的 chocolatey Inno Setup 6.7.1 里就没有；引用不存在的文件会让
       ISCC 直接中止（`Couldn't open include file`），连英文安装包都产不出来。
       → 语言文件随仓库走，预处理器按「仓库自带 → 编译器自带 → 仅英文」兜底。
+12. **Windows 打包后窗口层炸，而 CI 全绿**。`pywebview` 在 Windows 上必须经 pythonnet 调 .NET，
+    冻结后解析不出 `Python.Runtime.Loader.Initialize`（源码运行正常、CI 也正常——
+    因为 `--no-window` 冒烟测试压根没走到 `webview.start()`，这个洞是漏给用户去踩的）。
+    → Windows 改为内嵌 Chromium 并用 `--app=` 拉起，**彻底移除 pythonnet**；
+    同时新增 `--selftest`，在构建期就把「窗口层到底有没有真的进包」卡住，
+    而不是只测一个永远不碰窗口的 `--no-window`。教训：冒烟测试必须覆盖用户真正会走的那条路。
 
 ---
 

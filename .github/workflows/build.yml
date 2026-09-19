@@ -46,10 +46,55 @@ jobs:
           python tests/test_scale.py
           python tests/test_health.py
 
+      - name: Stage the bundled browser
+        shell: pwsh
+        run: |
+          # Ship our own Chromium so the app depends on nothing the target
+          # machine may or may not have -- and, just as importantly, so it never
+          # touches pythonnet, whose Python.Runtime.dll cannot be loaded from a
+          # frozen bundle. Chrome for Testing is Google's official portable
+          # build and is addressable through a stable JSON index.
+          $ProgressPreference = "SilentlyContinue"
+          $meta = Invoke-RestMethod "https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions-with-downloads.json"
+          $stable = $meta.channels.Stable
+          $url = ($stable.downloads.chrome | Where-Object { $_.platform -eq "win64" }).url
+          if (-not $url) { throw "could not resolve a win64 Chrome for Testing URL" }
+          Write-Host "Chrome for Testing $($stable.version)"
+          Write-Host "downloading $url"
+
+          $zip = Join-Path $env:RUNNER_TEMP "chrome-win64.zip"
+          # curl.exe rather than Invoke-WebRequest: this is ~200 MB and IWR's
+          # progress rendering makes it several times slower.
+          curl.exe -L --fail --retry 3 -o $zip $url
+          if ($LASTEXITCODE -ne 0) { throw "browser download failed (curl exit $LASTEXITCODE)" }
+          Expand-Archive -Path $zip -DestinationPath $env:RUNNER_TEMP -Force
+
+          New-Item -ItemType Directory -Force -Path "vendor\chromium" | Out-Null
+          Copy-Item "$env:RUNNER_TEMP\chrome-win64\*" "vendor\chromium\" -Recurse -Force
+
+          if (-not (Test-Path "vendor\chromium\chrome.exe")) { throw "chrome.exe was not staged" }
+          $mb = (Get-ChildItem "vendor\chromium" -Recurse -File | Measure-Object Length -Sum).Sum / 1MB
+          Write-Host ("staged Chromium: {0:N1} MB" -f $mb)
+
       - name: Build with PyInstaller
         env:
           PYTHONPATH: .
         run: pyinstaller --clean --noconfirm finance_ranker.spec
+
+      - name: Check the window layer shipped
+        shell: pwsh
+        env:
+          FR_DATA_DIR: ${{ runner.temp }}\frdata-selftest
+        run: |
+          # --no-window never touches the window layer, which is exactly how a
+          # build with no browser in it could reach users unnoticed. --selftest
+          # asserts the bundled browser is really there.
+          $exe = "dist\FinanceRanker\FinanceRanker.exe"
+          $proc = Start-Process -FilePath $exe -ArgumentList "--selftest" -PassThru -Wait
+          $log = Join-Path $env:FR_DATA_DIR "launcher.log"
+          if (Test-Path $log) { Get-Content $log }
+          if ($proc.ExitCode -ne 0) { throw "selftest failed (exit $($proc.ExitCode))" }
+          Write-Host "window layer present"
 
       - name: Smoke-test the packaged app
         shell: pwsh

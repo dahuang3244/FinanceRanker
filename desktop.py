@@ -15,6 +15,7 @@ from __future__ import annotations
 import logging
 import os
 import socket
+import subprocess
 import sys
 import threading
 import time
@@ -101,6 +102,75 @@ def _install_file_logging() -> Path | None:
         return None
 
 
+def _find_bundled_browser() -> Path | None:
+    """Path to the Chromium shipped inside the bundle, if there is one.
+
+    Only Windows ships one. The bundle layout is `_internal/chromium/chrome.exe`
+    (a directory in `datas` is copied by *contents*, into the destination name).
+    """
+    if not getattr(sys, "frozen", False):
+        return None
+    names = ("chrome.exe", "Chromium", "chromium")
+    roots = [
+        Path(getattr(sys, "_MEIPASS", "")) / "chromium",
+        Path(sys.executable).parent / "chromium",
+    ]
+    for root in roots:
+        for name in names:
+            for candidate in (root / name, root / "chrome-win64" / name):
+                if candidate.is_file():
+                    return candidate
+    return None
+
+
+def _open_browser_window(url: str) -> bool:
+    """Show `url` in the bundled Chromium as a chromeless app window.
+
+    Returns False when there is no bundled browser, so the caller can fall back
+    to the system browser. Blocks until the window is closed.
+    """
+    browser = _find_bundled_browser()
+    if browser is None:
+        return False
+
+    # Chrome refuses to start if its profile directory is not writable, and the
+    # install directory may be read-only (or under Program Files).
+    from app.config import DATA_DIR
+
+    profile = Path(DATA_DIR) / "browser-profile"
+    profile.mkdir(parents=True, exist_ok=True)
+
+    args = [
+        str(browser),
+        f"--app={url}",
+        f"--user-data-dir={profile}",
+        # A dedicated profile normally keeps this a private instance, but if one
+        # is already running Chrome hands the URL over and exits immediately.
+        # `--no-startup-window` is deliberately NOT passed: we want the window.
+        "--no-first-run",
+        "--no-default-browser-check",
+        "--disable-features=Translate,MediaRouter",
+        "--window-size=1440,960",
+    ]
+    log.info("opening the bundled browser: %s", browser)
+    proc = subprocess.Popen(args)
+
+    # Closing the window ends the browser process, which ends the app: the
+    # server has no reason to outlive its only window.
+    code = proc.wait()
+    log.info("browser window closed (exit %s)", code)
+    return True
+
+
+def _serve_forever() -> int:
+    """Keep the server alive until interrupted (browser fallback path)."""
+    try:
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        return 0
+
+
 def main() -> int:
     logging.basicConfig(
         level=logging.INFO, format="%(levelname)s %(name)s: %(message)s"
@@ -120,6 +190,21 @@ def main() -> int:
         )
 
     threading.excepthook = _thread_excepthook
+
+    # Exercises the pieces a headless --no-window check never touches, so a
+    # missing window layer fails the build instead of the user's double-click.
+    if "--selftest" in sys.argv:
+        browser = _find_bundled_browser()
+        if browser is not None:
+            log.info("selftest: bundled browser at %s", browser)
+            return 0
+        if sys.platform == "win32":
+            # Windows promises a self-contained window layer, so its absence is
+            # a build failure. Elsewhere the native webview is used instead.
+            log.error("selftest: this Windows build has no bundled browser")
+            return 2
+        log.info("selftest: no bundled browser, which is expected on this platform")
+        return 0
 
     port = _free_port()
     url = f"http://127.0.0.1:{port}/"
@@ -143,25 +228,40 @@ def main() -> int:
     # --no-window is for headless smoke tests of the packaged bundle.
     if "--no-window" in sys.argv:
         log.info("--no-window given; serving until interrupted")
+        return _serve_forever()
+
+    # ---- window layer -----------------------------------------------------
+    # On Windows the bundled Chromium is driven directly as a subprocess.
+    # pywebview is deliberately not used there: its WinForms backend goes
+    # through pythonnet, whose Python.Runtime.dll cannot be loaded from a frozen
+    # bundle ("Failed to resolve Python.Runtime.Loader.Initialize"). Native
+    # window on macOS, where WKWebView has no such dependency.
+    if sys.platform == "win32" and "--browser" not in sys.argv:
         try:
-            while True:
-                time.sleep(1)
-        except KeyboardInterrupt:
-            return 0
+            if _open_browser_window(url):
+                return 0
+            log.warning("this build has no bundled browser; using the system one")
+        except Exception:  # noqa: BLE001 - the window must never kill the app
+            log.exception("the bundled browser failed; using the system one")
+        webbrowser.open(url)
+        return _serve_forever()
 
     if "--browser" in sys.argv or not _webview_available():
         log.info("opening in the default browser instead of a native window")
         webbrowser.open(url)
-        try:
-            while True:
-                time.sleep(1)
-        except KeyboardInterrupt:
-            return 0
+        return _serve_forever()
 
-    import webview
+    try:
+        import webview
 
-    webview.create_window("FinanceRanker", url, width=1440, height=960, min_size=(980, 700))
-    webview.start()
+        webview.create_window(
+            "FinanceRanker", url, width=1440, height=960, min_size=(980, 700)
+        )
+        webview.start()
+    except Exception:  # noqa: BLE001 - degrade to a browser tab, never crash
+        log.exception("native window failed; opening in the default browser")
+        webbrowser.open(url)
+        return _serve_forever()
     return 0
 
 
