@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>公司明细 · FinanceRanker</title>
+<meta name="description" content="单只标的的完整明细：五个加权维度、逐项同行中位数与池内名次、原始财报输入。" />
+<link rel="icon" href="favicon.svg" type="image/svg+xml" />
+<link rel="stylesheet" href="css/shell.css" />
+<link rel="stylesheet" href="css/components.css" />
+<link rel="stylesheet" href="css/company.css" />
+</head>
+<body data-page="co">
+<div class="app">
+  <main class="main">
+    <header class="pagehead">
+      <div>
+        <div class="crumb"><span data-i18n="nav.group">工作台</span><span class="sep">/</span><b data-i18n="co.crumb">公司明细</b></div>
+        <h1 data-i18n="co.title">单只标的完整明细</h1>
+        <p class="lede" data-i18n="co.lede">按成长 / 盈利 / 现金 / 估值 / 市场五个加权维度展开，每项指标给出本股值、同行中位数、池内名次与 1–10 分位得分。</p>
+      </div>
+      <div class="pagehead-actions">
+        <a class="btn btn--quiet btn--sm" href="ranking.html" id="toRanking" data-i18n="action.back.ranking"></a>
+        <button class="btn btn--quiet btn--sm" type="button" id="pingBtn" data-i18n="action.reload"></button>
+      </div>
+    </header>
+
+    <div class="pagebody" id="companyBody">
+      <div class="glass herocard">
+        <div class="skeleton line" style="width:34%"></div>
+        <div class="skeleton line" style="width:52%;margin-top:14px"></div>
+      </div>
+    </div>
+
+    <footer class="foot" data-i18n="co.foot">
+      <b>分数是池内相对分位，不是绝对质量评分。</b>
+    </footer>
+  </main>
+</div>
+
+<script src="js/i18n.js"></script>
+<script src="js/shell.js"></script>
+<script src="js/company-view.js"></script>
+<script src="js/company.js"></script>
+</body>
+</html>

@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>抓取任务 · FinanceRanker</title>
+<meta name="description" content="选择股票池、提交抓取任务并实时跟踪逐只进度。" />
+<link rel="icon" href="favicon.svg" type="image/svg+xml" />
+<link rel="stylesheet" href="css/shell.css" />
+<link rel="stylesheet" href="css/components.css" />
+</head>
+<body data-page="rf">
+<div class="app">
+  <main class="main">
+    <header class="pagehead">
+      <div>
+        <div class="crumb"><span data-i18n="nav.group">工作台</span><span class="sep">/</span><b data-i18n="nav.refresh">抓取任务</b></div>
+        <h1 data-i18n="rf.title">抓取并排名</h1>
+        <p class="lede" data-i18n="rf.lede">每次抓取都会写入一份不可变快照。跑完即可在排名页筛选、导出 CSV / Excel，或到历史页与旧快照对比。</p>
+      </div>
+      <div class="pagehead-actions">
+        <span class="badge" id="concurrencyBadge">—</span>
+        <a class="btn btn--quiet" href="ranking.html" id="toRanking" data-i18n="action.see.ranking"></a>
+      </div>
+    </header>
+
+    <div class="pagebody">
+      <div class="runlayout">
+        <!-- ── left: pool editor ─────────────────────────────────────── -->
+        <div style="display:flex;flex-direction:column;gap:18px">
+          <!-- mode switch: keep the hand-picked universe, add sector ranking -->
+          <section class="section" id="modeSwitchSection">
+            <div class="section-head" style="margin-bottom:0">
+              <div>
+                <h2 data-i18n="rf.mode">抓取模式</h2>
+                <p class="hint" data-i18n="rf.mode.hint">自定义股票池保留原有用法；板块模式按行业自动选同行。</p>
+              </div>
+              <div class="tools">
+                <div class="seg" id="modeSeg" role="group" aria-label="mode">
+                  <button type="button" data-mode="pool" aria-pressed="true" data-i18n="rf.mode.pool">自定义股票池</button>
+                  <button type="button" data-mode="sector" aria-pressed="false" data-i18n="rf.mode.sector">板块排名</button>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <!-- sector mode panel (rendered by js/sector.js, hidden by default) -->
+          <div id="sectorMode" hidden></div>
+
+          <section class="section" id="poolMode">
+            <div class="section-head">
+              <div>
+                <h2 data-i18n="rf.pool">股票池</h2>
+                <p class="hint" data-i18n="rf.pool.hint">逗号、空格或换行分隔；自动去重并转大写。上限 100 只。</p>
+              </div>
+              <div class="tools">
+                <button class="btn btn--quiet btn--sm" type="button" id="poolDefault" data-i18n="rf.pool.default"></button>
+                <button class="btn btn--quiet btn--sm" type="button" id="poolClear" data-i18n="rf.pool.clear"></button>
+              </div>
+            </div>
+
+            <div class="glass console">
+              <div class="field">
+                <label for="poolInput" data-i18n="rf.pool.label">股票代码</label>
+                <textarea class="textarea" id="poolInput" rows="5" spellcheck="false"
+                  placeholder="MSFT, AAPL, GOOGL, AMZN, META, NVDA"></textarea>
+                <div class="help" id="poolHelp">读取默认股票池中…</div>
+              </div>
+
+              <div class="field">
+                <label><span data-i18n="rf.pool.sequence">当前序列</span> <span class="mono" id="poolCount">0</span></label>
+                <div class="ticker-bag" id="poolBag"></div>
+              </div>
+
+              <div class="field">
+                <label data-i18n="rf.presets">快捷股票池</label>
+                <div class="presets" id="poolPresets"></div>
+              </div>
+
+              <hr class="rule" />
+
+              <div class="row">
+                <button class="btn btn--primary" type="button" id="runBtn" data-i18n="action.start"></button>
+                <span class="spacer"></span>
+                <label class="check"><input type="checkbox" id="openAfter" checked /> <span data-i18n="rf.runAfter">跑完自动打开排名页</span></label>
+              </div>
+
+              <div class="alert hidden" id="runAlert" role="alert"></div>
+            </div>
+          </section>
+
+          <section class="section">
+            <div class="section-head">
+              <div>
+                <h2 data-i18n="rf.jobs">最近任务</h2>
+                <p class="hint" data-i18n="rf.jobs.hint">进程内任务队列，重启后清空。</p>
+              </div>
+              <div class="tools">
+                <button class="btn btn--quiet btn--sm" type="button" id="jobsReload" data-i18n="action.refresh"></button>
+              </div>
+            </div>
+            <div class="glass glass--solid" style="padding:8px 10px">
+              <div class="tablewrap tablewrap--flat" style="border:0;background:transparent;box-shadow:none;backdrop-filter:none">
+                <table class="data" id="jobsTable">
+                  <thead>
+                    <tr><th data-i18n="rf.jobs.name">任务</th><th data-i18n="rf.jobs.status">状态</th><th class="right" data-i18n="rf.jobs.progress">进度</th><th data-i18n="rf.jobs.message">消息</th><th></th></tr>
+                  </thead>
+                  <tbody id="jobsBody"></tbody>
+                </table>
+              </div>
+            </div>
+          </section>
+        </div>
+
+        <!-- ── right: live console ───────────────────────────────────── -->
+        <div style="display:flex;flex-direction:column;gap:18px" id="monitorCol">
+          <section class="section">
+            <div class="section-head">
+              <div>
+                <h2 data-i18n="rf.live">实时进度</h2>
+                <p class="hint" data-i18n="rf.live.hint">SSE 推送；断线自动降级为轮询。</p>
+              </div>
+              <div class="tools">
+                <span class="badge" id="streamBadge"><span class="dot"></span><span data-i18n="rf.badge.idle">空闲</span></span>
+              </div>
+            </div>
+
+            <div class="glass console">
+              <div class="progress" id="progress">
+                <div class="top">
+                  <div>
+                    <div class="pct" id="pctText">0%</div>
+                    <div class="stage" id="stageText">尚未启动任何任务</div>
+                  </div>
+                  <div class="stage mono" id="etaText">—</div>
+                </div>
+                <div class="track"><i class="fill" id="progressFill"></i></div>
+              </div>
+
+              <div class="steps" id="steps"></div>
+
+              <div class="field">
+                <label data-i18n="rf.log">事件日志</label>
+                <div class="log" id="log" aria-live="polite"></div>
+              </div>
+
+              <div class="row">
+                <button class="btn btn--quiet btn--sm" type="button" id="logClear" data-i18n="rf.log.clear"></button>
+                <span class="spacer"></span>
+                <a class="btn btn--quiet btn--sm" href="ranking.html" id="seeRanking" hidden data-i18n="rf.art.seeRanking"></a>
+              </div>
+            </div>
+          </section>
+
+          <section class="section">
+            <div class="section-head">
+              <div>
+                <h2 data-i18n="rf.artifacts">本次产物</h2>
+                <p class="hint" id="artifactHint" data-i18n="rf.artifacts.hint">任务完成后可在此直接导出。</p>
+              </div>
+            </div>
+            <div class="glass glass--solid" style="padding:18px 20px;display:flex;flex-direction:column;gap:14px">
+              <div class="grid grid--3" id="artifactStats">
+                <div class="statcard"><div class="label" data-i18n="rf.art.rows">入库行数</div><div class="value" id="artRows">—</div></div>
+                <div class="statcard"><div class="label" data-i18n="rf.art.eligible">可排名</div><div class="value" id="artEligible">—</div></div>
+                <div class="statcard"><div class="label" data-i18n="rf.art.errors">失败</div><div class="value" id="artErrors">—</div></div>
+              </div>
+              <div class="row">
+                <button class="btn btn--quiet" type="button" id="exportCsv" disabled data-i18n="action.export.csv"></button>
+                <button class="btn btn--quiet" type="button" id="exportXlsx" disabled data-i18n="action.export.xlsx"></button>
+                <span class="spacer"></span>
+                <button class="btn btn--ghost btn--sm" type="button" id="viewResult" disabled data-i18n="rf.art.viewResult"></button>
+              </div>
+              <div id="errorList"></div>
+            </div>
+          </section>
+        </div>
+      </div>
+    </div>
+
+    <footer class="foot" data-i18n="rf.foot">
+      <b>抓取会实时访问公开数据源</b>，请勿高频重复提交。
+    </footer>
+  </main>
+</div>
+
+<script src="js/scale.js"></script>
+<script src="js/i18n.js"></script>
+<script src="js/shell.js"></script>
+<script src="js/refresh.js"></script>
+<script src="js/sector.js"></script>
+</body>
+</html>

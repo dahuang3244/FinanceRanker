@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>总览 · FinanceRanker</title>
+<meta name="description" content="免费公开数据驱动的科技股同行排名：数据源状态、快照概览与头部标的。" />
+<link rel="icon" href="favicon.svg" type="image/svg+xml" />
+<link rel="stylesheet" href="css/shell.css" />
+<link rel="stylesheet" href="css/components.css" />
+</head>
+<body data-page="ov">
+<div class="app">
+  <main class="main">
+    <header class="pagehead">
+      <div>
+        <div class="crumb">
+          <span data-i18n="nav.group">工作台</span><span class="sep">/</span><b data-i18n="nav.overview">总览</b>
+        </div>
+        <h1 data-i18n="ov.title">同行排名总览</h1>
+        <p class="lede" data-i18n="ov.lede">SEC XBRL 财报 + 公开行情，按成长、盈利、现金、估值、市场五个维度做池内 1–10 分位打分，再按 25/25/20/20/10 合成总分。</p>
+      </div>
+      <div class="pagehead-actions">
+        <button class="btn btn--quiet" type="button" data-ping id="ovRefresh" data-i18n="action.refresh"></button>
+        <a class="btn btn--primary" href="refresh.html" id="ovRun" data-i18n="action.start"></a>
+      </div>
+    </header>
+
+    <div class="pagebody">
+      <!-- scoreboard -->
+      <section class="section">
+        <div class="glass board" id="board">
+          <div class="lead">
+            <div class="kicker" data-i18n="ov.screen">当前屏幕</div>
+            <p class="headline" id="boardHeadline">正在读取最近一次快照…</p>
+            <p id="boardSub" data-i18n="ov.screen">数据源、快照与头部标的会在这里汇总。</p>
+          </div>
+          <div class="cell" id="cellCoverage">
+            <div class="k" data-i18n="ov.cell.pool">股票池</div>
+            <div class="v">—</div>
+            <div class="d">—</div>
+          </div>
+          <div class="cell" id="cellTop">
+            <div class="k" data-i18n="ov.cell.top">最高总分</div>
+            <div class="v">—</div>
+            <div class="d">—</div>
+          </div>
+          <div class="cell" id="cellMedian">
+            <div class="k" data-i18n="ov.cell.median">中位总分</div>
+            <div class="v">—</div>
+            <div class="d">—</div>
+          </div>
+          <div class="cell" id="cellSnap">
+            <div class="k" data-i18n="ov.cell.snapshot">快照</div>
+            <div class="v">—</div>
+            <div class="d">—</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- providers (the podium was removed: the full ranking table below
+           already carries per-dimension detail, so a top-3 recap was redundant) -->
+      <section class="section">
+        <div class="section-head">
+          <div>
+            <h2 data-i18n="ov.providers">数据源</h2>
+            <p class="hint" data-i18n="ov.providers.hint">provider 容错链，逐个降级</p>
+          </div>
+          <div class="tools">
+            <a class="btn btn--quiet" href="sources.html" id="provMore" data-i18n="ov.more"></a>
+          </div>
+        </div>
+        <div class="glass glass--solid" style="padding:20px 22px;display:flex;flex-direction:column;gap:14px">
+          <div class="provlist" id="provlist">
+            <div class="skeleton line" style="width:70%"></div>
+            <div class="skeleton line" style="width:52%;margin-top:12px"></div>
+            <div class="skeleton line" style="width:62%"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- coverage matrix -->
+      <section class="section">
+        <div class="section-head">
+          <div>
+            <h2 data-i18n="ov.matrix">分维度矩阵</h2>
+            <p class="hint" data-i18n="ov.matrix.hint">
+              <b>红＝弱，绿＝强</b>，以 <span class="mono">5.5</span> 为中性轴，颜色越深表示越偏离中性；
+              <span class="mono">—</span> 表示该维度数据缺失。
+            </p>
+            <div class="scale-legend" id="matrixLegend"></div>
+          </div>
+          <div class="tools">
+            <label class="check"><input type="checkbox" id="matrixEligible" /> <span data-i18n="ov.matrix.eligibleOnly">仅可排名</span></label>
+          </div>
+        </div>
+        <div class="glass" id="matrixWrap" style="padding:14px 18px 8px;overflow-x:auto">
+          <table class="matrix">
+            <thead>
+              <tr>
+                <th data-i18n="common.ticker">代码</th>
+                <th data-i18n="dim.growth">成长</th>
+                <th data-i18n="dim.profitability">盈利</th>
+                <th data-i18n="dim.cash">现金</th>
+                <th data-i18n="dim.valuation">估值</th>
+                <th data-i18n="dim.market">市场</th>
+                <th data-i18n="common.overall">总分</th>
+                <th data-i18n="common.coverage">覆盖</th>
+                <th data-i18n="common.profile">画像</th>
+              </tr>
+            </thead>
+            <tbody id="matrixBody">
+              <tr><td colspan="9"><div class="skeleton line" style="width:100%"></div></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- run history strip -->
+      <section class="section">
+        <div class="section-head">
+          <div>
+            <h2 data-i18n="ov.recent">最近运行</h2>
+            <p class="hint" data-i18n="ov.recent.hint">每根柱子是一次刷新，高度对应本次成功入库的股票数。</p>
+          </div>
+          <div class="tools">
+            <a class="btn btn--quiet" href="history.html" id="stripMore" data-i18n="ov.history"></a>
+          </div>
+        </div>
+        <div class="glass glass--solid" style="padding:20px 22px;display:flex;flex-direction:column;gap:16px">
+          <div class="runstrip" id="runstrip"></div>
+          <hr class="rule" />
+          <div class="row" style="font-size:12px;color:var(--muted)" id="stripMeta">读取中…</div>
+        </div>
+      </section>
+    </div>
+
+    <footer class="foot" data-i18n="foot.disclaimer">
+      <b>研究筛选工具，不构成投资建议。</b>
+      价格为日收盘价（有复权用复权），52 周高低点可能与盘中极值略有差异；
+      非 GAAP EPS 桥为模型估算。任何决策前请核对原始财报与 SEC 披露文件。
+    </footer>
+  </main>
+</div>
+
+<script src="js/scale.js"></script>
+<script src="js/i18n.js"></script>
+<script src="js/shell.js"></script>
+<script src="js/overview.js"></script>
+</body>
+</html>

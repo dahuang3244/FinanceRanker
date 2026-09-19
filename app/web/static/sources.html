@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>数据源与口径 · FinanceRanker</title>
+<meta name="description" content="provider 容错链、本地缓存、40+ 指标口径与 API 速查。" />
+<link rel="icon" href="favicon.svg" type="image/svg+xml" />
+<link rel="stylesheet" href="css/shell.css" />
+<link rel="stylesheet" href="css/components.css" />
+</head>
+<body data-page="sc">
+<div class="app">
+  <main class="main">
+    <header class="pagehead">
+      <div>
+        <div class="crumb"><span data-i18n="nav.group">工作台</span><span class="sep">/</span><b data-i18n="nav.sources">数据源</b></div>
+        <h1 data-i18n="sc.title">数据源与口径</h1>
+        <p class="lede" data-i18n="sc.lede">每个抓取链路都按顺序尝试多个免费公开源，任一环节失败即降级到下一个；下面的状态来自后端 <span class="mono">/api/health</span>。</p>
+      </div>
+      <div class="pagehead-actions">
+        <span class="badge" id="healthBadge">检查中…</span>
+        <button class="btn btn--quiet" type="button" id="pingBtn" data-i18n="sc.recheck"></button>
+      </div>
+    </header>
+
+    <div class="pagebody">
+      <!-- providers -->
+      <section class="section">
+        <div class="section-head">
+          <div>
+            <h2 data-i18n="sc.chains">抓取链路</h2>
+            <p class="hint" data-i18n="sc.chains.hint">顺序即优先级，失败自动降级；雅虎仅在配置代理或海外主机时启用。</p>
+          </div>
+        </div>
+        <div class="srcgrid" id="srcgrid">
+          <div class="glass srccard"><div class="skeleton line" style="width:60%"></div>
+            <div class="skeleton line" style="width:90%;margin-top:10px"></div>
+            <div class="skeleton line" style="width:74%"></div></div>
+          <div class="glass srccard"><div class="skeleton line" style="width:60%"></div>
+            <div class="skeleton line" style="width:90%;margin-top:10px"></div>
+            <div class="skeleton line" style="width:74%"></div></div>
+          <div class="glass srccard"><div class="skeleton line" style="width:60%"></div>
+            <div class="skeleton line" style="width:90%;margin-top:10px"></div>
+            <div class="skeleton line" style="width:74%"></div></div>
+        </div>
+      </section>
+
+      <!-- cache + store -->
+      <section class="section">
+        <div class="grid grid--2">
+          <div class="section">
+            <div class="section-head">
+              <div>
+                <h2 data-i18n="sc.cache">本地缓存</h2>
+                <p class="hint" data-i18n="sc.cache.hint">TTL 到期后自动回源；清空只影响抓取速度，不影响已有快照。</p>
+              </div>
+              <div class="tools">
+                <button class="btn btn--quiet btn--sm" type="button" id="clearCache" data-i18n="sc.cache.clear"></button>
+              </div>
+            </div>
+            <div class="glass" style="padding:18px 20px">
+              <div class="cachebar" id="cachebar"></div>
+            </div>
+          </div>
+
+          <div class="section">
+            <div class="section-head">
+              <div>
+                <h2 data-i18n="sc.store">快照存储</h2>
+                <p class="hint" data-i18n="sc.store.hint">SQLite，每次运行一份不可变快照。</p>
+              </div>
+            </div>
+            <div class="glass" style="padding:18px 20px">
+              <dl class="dl" id="storeInfo"></dl>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- metric dictionary -->
+      <section class="section">
+        <div class="section-head">
+          <div>
+            <h2 data-i18n="sc.dict">指标与打分口径</h2>
+            <p class="hint" data-i18n="sc.dict.hint">每项指标在股票池内做 1–10 分位打分，维度内取平均，再按权重合成总分。</p>
+          </div>
+        </div>
+        <div class="glass" style="padding:20px 22px">
+          <div class="dict" id="dict"></div>
+        </div>
+      </section>
+
+      <!-- API -->
+      <section class="section">
+        <div class="section-head">
+          <div>
+            <h2 data-i18n="sc.api">API 速查</h2>
+            <p class="hint" data-i18n="sc.api.hint">前端只用到这些端点；完整 OpenAPI 文档在 <a class="tick-link" href="/docs" target="_blank" rel="noreferrer">/docs</a>。</p>
+          </div>
+        </div>
+        <div class="glass" style="padding:0;overflow:hidden">
+          <div class="tablewrap tablewrap--flat" style="border:0;border-radius:0;background:transparent;box-shadow:none;backdrop-filter:none">
+            <table class="data">
+              <thead><tr><th data-i18n="sc.api.method">方法</th><th data-i18n="sc.api.path">路径</th><th data-i18n="sc.api.desc">说明</th></tr></thead>
+              <tbody id="apiBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- caveats -->
+      <section class="section">
+        <div class="section-head">
+          <div><h2 data-i18n="sc.caveats">口径与免责</h2><p class="hint" data-i18n="sc.caveats.hint">这些结论来自真实抓取过程中的实测。</p></div>
+        </div>
+        <div class="grid grid--2" id="caveats"></div>
+      </section>
+    </div>
+
+    <footer class="foot" data-i18n="sc.foot">
+      <b>FinanceRanker</b> · 免费公开数据源 · 研究筛选工具，不构成投资建议。
+    </footer>
+  </main>
+</div>
+
+<script src="js/scale.js"></script>
+<script src="js/i18n.js"></script>
+<script src="js/shell.js"></script>
+<script src="js/sources.js"></script>
+</body>
+</html>

@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>数据预览 · FinanceRanker</title>
+<meta name="description" content="选择美股，查看 Excel 每个参数由哪条 akshare 数据、用什么公式算出来。" />
+<link rel="icon" href="favicon.svg" type="image/svg+xml" />
+<link rel="stylesheet" href="css/shell.css" />
+<link rel="stylesheet" href="css/components.css" />
+<link rel="stylesheet" href="css/preview.css" />
+</head>
+<body data-page="pv">
+<div class="app">
+  <main class="main">
+    <header class="pagehead">
+      <div>
+        <div class="crumb">
+          <span data-i18n="nav.group">工作台</span><span class="sep">/</span><b data-i18n="nav.preview">数据预览</b>
+        </div>
+        <h1 data-i18n="pv.title">参数计算预览</h1>
+        <p class="lede" data-i18n="pv.lede">
+          仅美股。选一只标的，用 akshare 的公开接口取行情与财报，逐项算出
+          <span class="mono">Free_Public_Data_Tech_Ranker.xlsx</span> 里的参数，
+          并标明每个值对应哪一列、用什么公式、取自哪个接口。
+        </p>
+      </div>
+      <div class="pagehead-actions">
+        <button class="btn btn--quiet" type="button" id="pvReload"></button>
+        <button class="btn btn--primary" type="button" id="pvLoad"></button>
+      </div>
+    </header>
+
+    <div class="pagebody">
+      <!-- 1. ticker picker -->
+      <section class="section">
+        <div class="section-head">
+          <div>
+            <h2 data-i18n="pv.pick">选择美股</h2>
+            <p class="hint" data-i18n="pv.pick.hint">输入代码或公司名搜索；股票池来自 SEC 官方名录（美股全量）。</p>
+          </div>
+          <div class="tools"><span class="mono faint" id="uniMeta" data-i18n="pv.universe.loading">股票池加载中…</span></div>
+        </div>
+
+        <div class="glass glass--solid" style="padding:18px 20px">
+          <div class="row" style="gap:10px">
+            <div class="pv-search">
+              <input class="input" id="pvQuery" type="search" autocomplete="off" spellcheck="false"
+                     data-i18n-ph="pv.search.ph" placeholder="例如 NVDA / NVID / apple" />
+              <div class="pv-suggest" id="pvSuggest" hidden></div>
+            </div>
+            <button class="btn btn--primary" type="button" id="pvGo" data-i18n="pv.load">加载参数</button>
+          </div>
+          <div class="pv-picks" id="pvPicks" style="margin-top:12px"></div>
+        </div>
+      </section>
+
+      <!-- 2. overview -->
+      <section class="section" id="pvOverview" hidden>
+        <div class="section-head">
+          <div>
+            <h2 id="pvTitle" data-i18n="pv.overview">概览</h2>
+            <p class="hint" id="pvMeta"></p>
+          </div>
+        </div>
+        <div class="glass board" id="pvBoard"></div>
+
+        <!-- Price chart gets its own full-width row: side by side it was too
+             narrow to read the trend it exists to show. -->
+        <div class="glass glass--solid" style="margin-top:14px;padding:18px 20px">
+          <div class="section-head" style="margin-bottom:10px">
+            <div><h2 style="font-size:13px" data-i18n="pv.spark">价格走势</h2>
+              <p class="hint" id="pvSparkNote">—</p></div>
+          </div>
+          <svg class="pv-spark" id="pvSpark" viewBox="0 0 600 150" preserveAspectRatio="none"></svg>
+        </div>
+
+        <div class="glass glass--solid" style="margin-top:14px;padding:18px 20px">
+          <div class="section-head" style="margin-bottom:10px">
+            <div><h2 style="font-size:13px" data-i18n="pv.sources">本次数据来源</h2>
+              <p class="hint" data-i18n="pv.sources.hint">每个参数都标注了实际使用的接口</p></div>
+          </div>
+          <div class="provlist" id="pvSources"></div>
+        </div>
+
+        <div class="alert alert--warn" id="pvWarn" hidden style="margin-top:14px"></div>
+      </section>
+
+      <!-- 3. parameters -->
+      <section class="section" id="pvParams" hidden>
+        <div class="section-head">
+          <div>
+            <h2 data-i18n="pv.params">参数计算明细</h2>
+            <p class="hint" data-i18n="pv.params.hint">
+              <b>Excel 列</b> = 该参数在原工作簿里的位置；<b>算自</b> = 实际计算公式；
+              <span class="badge badge--mid">手工</span> 表示 akshare 不提供、需人工录入原表。
+            </p>
+          </div>
+          <div class="tools"><div class="seg" id="pvTabs"></div></div>
+        </div>
+        <div id="pvGroups"></div>
+      </section>
+
+      <!-- 4. extra akshare ratios -->
+      <section class="section" id="pvExtra" hidden>
+        <div class="section-head">
+          <div>
+            <h2 data-i18n="pv.extra">akshare 额外可得</h2>
+            <p class="hint" data-i18n="pv.extra.hint">这些指标 akshare 直接给出，原工作簿里没有——可作为补充视角或交叉验证。</p>
+          </div>
+        </div>
+        <div class="glass tablewrap">
+          <table class="matrix" id="pvExtraTable">
+            <thead></thead><tbody></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- 5. raw statements -->
+      <section class="section" id="pvRaw" hidden>
+        <div class="section-head">
+          <div>
+            <h2 data-i18n="pv.raw">原始报表</h2>
+            <p class="hint" data-i18n="pv.raw.hint">akshare 直出的未加工数值，用于核对上面的计算口径。</p>
+          </div>
+          <div class="tools"><div class="seg" id="pvStmtTabs"></div></div>
+        </div>
+        <div class="glass tablewrap">
+          <table class="matrix" id="pvRawTable">
+            <thead></thead><tbody></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- 6. source availability -->
+      <section class="section">
+        <div class="section-head">
+          <div>
+            <h2 data-i18n="pv.avail">akshare 美股接口可用性</h2>
+            <p class="hint" data-i18n="pv.avail.hint">本服务只使用实测可用的接口；不可用的已用等价源替代或明确留空。</p>
+          </div>
+        </div>
+        <div class="glass tablewrap">
+          <table class="matrix">
+            <thead>
+              <tr><th data-i18n="pv.avail.interface">接口</th><th data-i18n="pv.avail.status">状态</th><th data-i18n="pv.avail.usage">本服务用法</th><th style="text-align:left" data-i18n="pv.avail.note">说明</th></tr>
+            </thead>
+            <tbody id="pvAvail"></tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+
+    <footer class="foot" data-i18n="pc.foot">
+      <b>预览页仅用于核对计算口径，不写入快照。</b>
+    </footer>
+  </main>
+</div>
+
+<script src="js/scale.js"></script>
+<script src="js/i18n.js"></script>
+<script src="js/shell.js"></script>
+<script src="js/preview.js"></script>
+</body>
+</html>

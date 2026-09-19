@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>历史快照 · FinanceRanker</title>
+<meta name="description" content="历次抓取的不可变快照：时间轴、分数走势与单只标的的历史序列。" />
+<link rel="icon" href="favicon.svg" type="image/svg+xml" />
+<link rel="stylesheet" href="css/shell.css" />
+<link rel="stylesheet" href="css/components.css" />
+</head>
+<body data-page="hs">
+<div class="app">
+  <main class="main">
+    <header class="pagehead">
+      <div>
+        <div class="crumb"><span data-i18n="nav.group">工作台</span><span class="sep">/</span><b data-i18n="nav.history">历史快照</b></div>
+        <h1 data-i18n="hs.title">历史快照</h1>
+        <p class="lede" data-i18n="hs.lede">每次抓取都写入一份不可变快照，可随时回看当时的排名，并与指定快照对比分数变化。</p>
+      </div>
+      <div class="pagehead-actions">
+        <button class="btn btn--quiet" type="button" id="reloadRuns" data-i18n="hs.reload"></button>
+        <a class="btn btn--primary" href="refresh.html" id="newRun" data-i18n="hs.new"></a>
+      </div>
+    </header>
+
+    <div class="pagebody">
+      <div class="histlayout">
+        <!-- timeline -->
+        <section class="section">
+          <div class="section-head">
+            <div>
+              <h2 data-i18n="hs.timeline">运行时间轴</h2>
+              <p class="hint" id="timelineHint">按时间倒序，最新在前。</p>
+            </div>
+          </div>
+          <div class="glass timeline" id="timeline">
+            <div class="skeleton line" style="width:70%"></div>
+            <div class="skeleton line" style="width:52%;margin-top:12px"></div>
+            <div class="skeleton line" style="width:62%"></div>
+          </div>
+        </section>
+
+        <!-- detail -->
+        <section class="section">
+          <div class="glass histpanel" id="panel">
+            <div id="panelBody"></div>
+          </div>
+        </section>
+      </div>
+    </div>
+
+    <footer class="foot" data-i18n="hs.foot">
+      <b>快照只增不改。</b>
+    </footer>
+  </main>
+</div>
+
+<script src="js/scale.js"></script>
+<script src="js/i18n.js"></script>
+<script src="js/shell.js"></script>
+<script src="js/history.js"></script>
+</body>
+</html>

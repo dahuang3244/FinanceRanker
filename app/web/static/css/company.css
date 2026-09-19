@@ -1,0 +1,324 @@
+/* ==========================================================================
+   Company detail page — the dimension-grouped single-company review.
+   Loaded on top of shell.css + components.css.
+   ========================================================================== */
+
+.pagebody .crumb { margin-bottom: 14px; }
+.pagebody .crumb a {
+  color: var(--muted);
+  text-decoration: none;
+  border-bottom: 1px solid transparent;
+  transition: color 0.24s var(--ease), border-color 0.24s var(--ease);
+}
+.pagebody .crumb a:hover { color: var(--accent-deep); border-bottom-color: var(--accent-line); }
+
+/* ------------------------------------------------------------------- hero */
+.herocard { padding: 24px 26px 22px; }
+.herohead {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 22px;
+  align-items: start;
+}
+.herocard .cname {
+  margin: 12px 0 0;
+  font-size: 25px;
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  line-height: 1.15;
+}
+.herocard .cmeta {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.7;
+}
+.bigscore {
+  flex: none;
+  text-align: right;
+  padding-left: 24px;
+  border-left: 1px solid var(--hair);
+}
+.bigscore b {
+  display: block;
+  font-family: var(--mono);
+  font-size: 44px;
+  line-height: 1;
+  letter-spacing: -0.05em;
+}
+.bigscore span {
+  display: block;
+  margin-top: 7px;
+  font-size: 10.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+.tone-good { color: var(--good); }
+.tone-mid { color: var(--mid); }
+.tone-soft { color: var(--soft); }
+.tone-low { color: var(--low); }
+.tone-na { color: var(--faint); }
+
+/* horizontal score rows under the hero */
+.scorerows {
+  margin-top: 22px;
+  padding-top: 18px;
+  border-top: 1px solid var(--hair);
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 12px 26px;
+}
+.scorerow { display: grid; grid-template-columns: 88px minmax(0, 1fr); align-items: center; gap: 12px; }
+.scorerow .sl {
+  font-size: 11.5px;
+  color: var(--muted);
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+.scorerow .sl em {
+  font-style: normal;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--faint);
+}
+.scorerow .meter { justify-content: flex-start; }
+.scorerow .meter .track { width: 100%; max-width: 120px; }
+
+/* --------------------------------------------------------------- score rail */
+.scorerail {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 1px;
+  padding: 0;
+  overflow: hidden;
+}
+.scorerail .railcell {
+  padding: 16px 18px 18px;
+  border-left: 1px solid var(--hair);
+  background: rgba(255, 252, 247, 0.5);
+}
+.scorerail .railcell:first-child { border-left: 0; }
+.scorerail .railcell.is-total { background: linear-gradient(180deg, rgba(255, 253, 249, 0.96), rgba(252, 244, 234, 0.86)); }
+.scorerail .rl {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+.scorerail .rl em { font-style: normal; font-family: var(--mono); font-size: 9.5px; }
+.scorerail .rv {
+  display: block;
+  margin-top: 10px;
+  font-family: var(--mono);
+  font-size: 25px;
+  font-weight: 500;
+  letter-spacing: -0.04em;
+  line-height: 1;
+}
+.scorerail .rbar {
+  display: block;
+  margin-top: 12px;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--well);
+  overflow: hidden;
+}
+.scorerail .rbar i {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: currentColor;
+  opacity: 0.75;
+  transform-origin: left center;
+  transition: transform 0.75s var(--ease);
+}
+
+/* -------------------------------------------------------------- action bar */
+.detailbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.ranknav { display: flex; align-items: center; gap: 8px; }
+.ranknav a + a, .ranknav a { display: inline-flex; }
+.ranknav a[disabled] { opacity: 0.42; pointer-events: none; }
+.ranknav a span { font-family: var(--mono); font-size: 11.5px; }
+
+/* ----------------------------------------------------------- dimension block */
+.dimblock { padding: 20px 22px 16px; display: flex; flex-direction: column; gap: 16px; }
+.dimhead {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 16px;
+}
+.dimico {
+  width: 34px; height: 34px;
+  border-radius: 11px;
+  display: grid; place-items: center;
+  border: 1px solid var(--hair);
+  background: var(--well);
+  color: var(--ink-2);
+  flex: none;
+}
+.dimico svg { width: 16px; height: 16px; }
+.dimtitle h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+}
+.dimtitle h2 em {
+  font-style: normal;
+  font-size: 10.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--faint);
+  font-weight: 400;
+}
+.dimtitle p { margin: 3px 0 0; font-size: 11.5px; color: var(--muted); }
+.dimmeta { display: flex; gap: 6px; }
+.dimscore { text-align: right; padding-left: 18px; border-left: 1px solid var(--hair); }
+.dimscore b {
+  font-family: var(--mono);
+  font-size: 22px;
+  font-weight: 500;
+  letter-spacing: -0.03em;
+}
+.dimscore span { font-size: 10.5px; color: var(--faint); margin-left: 3px; }
+
+.dimtable { max-height: none; background: transparent; }
+.dimtable table.data { font-size: 12.5px; }
+.dimtable table.data td, .dimtable table.data th { padding: 9px 12px; white-space: nowrap; }
+.dimtable .mlabel { white-space: normal; min-width: 190px; }
+.dimtable .mlabel b { display: block; font-weight: 500; font-size: 12.5px; }
+.dimtable .mlabel em {
+  display: block;
+  font-style: normal;
+  font-size: 10.5px;
+  color: var(--faint);
+  margin-top: 2px;
+}
+.dimtable .mnum .up { color: var(--good); }
+.dimtable .mnum .down { color: var(--low); }
+.dimtable .mdelta .up { color: var(--good); }
+.dimtable .mdelta .down { color: var(--low); }
+.dimtable .mmedian { color: var(--muted); }
+.dimtable .mrank em { font-style: normal; color: var(--faint); font-size: 10.5px; }
+.dimtable .mnum .rankchip {
+  display: none;
+  font-style: normal;
+  margin-left: 6px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--faint);
+}
+.dimtable .mnum .rankchip i { font-style: normal; opacity: 0.75; }
+.dimtable .mscore { font-size: 13.5px; }
+.dimtable tr.is-missing { opacity: 0.62; }
+.dimtable tr.is-missing .mlabel b { color: var(--muted); }
+
+/* Column rhythm comes from the <colgroup>: metric label / 本股 / 同行中位 /
+   差值 / 池内名次 / 得分条 / 得分. Narrow screens drop the last columns so the
+   remaining ones keep their full width instead of overlapping. */
+.dimtable table.data { table-layout: fixed; }
+.dimtable td, .dimtable th { overflow: hidden; text-overflow: ellipsis; }
+/* the value column can sit far from the label, so give the label room to
+   breathe before the ellipsis kicks in */
+.dimtable td.mlabel, .dimtable th.metric { padding-right: 26px; }
+.dimtable td.mnum, .dimtable td.mmedian, .dimtable td.mdelta, .dimtable td.mscore { padding-left: 8px; }
+.mbarline {
+  display: block;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--well);
+  overflow: hidden;
+}
+.mbarline i {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: currentColor;
+  opacity: 0.85;
+  transform-origin: left center;
+  transition: transform 0.7s var(--ease);
+}
+.mbarline i.tone-na { opacity: 0; }
+
+/* ------------------------------------------------------------------ inputs */
+.inputs .inputgrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 1px;
+  background: var(--hair);
+  border: 1px solid var(--hair);
+  border-radius: var(--r-md);
+  overflow: hidden;
+}
+.inputgroup { background: rgba(255, 252, 247, 0.62); padding: 15px 17px 17px; }
+.inputgroup h3 {
+  margin: 0 0 11px;
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--accent-deep);
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.inputgroup h3 svg { width: 13px; height: 13px; }
+.inputgroup h3 span { letter-spacing: 0.1em; }
+.inputgroup h3 em {
+  margin-left: auto;
+  font-style: normal;
+  font-size: 9.5px;
+  letter-spacing: 0.04em;
+  color: var(--faint);
+  text-transform: none;
+}
+.inputgroup .dl { grid-template-columns: minmax(0, 1fr) auto; gap: 6px 14px; }
+.inputgroup .dl dd.na { color: var(--faint); }
+
+/* -------------------------------------------------------------- responsive */
+@media (max-width: 1180px) {
+  .scorerail { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .scorerail .railcell:nth-child(4) { border-left: 0; }
+  .scorerail .railcell:nth-child(n + 4) { border-top: 1px solid var(--hair); }
+}
+
+@media (max-width: 860px) {
+  .herocard { padding: 18px 16px; }
+  .herohead { grid-template-columns: minmax(0, 1fr); }
+  .bigscore {
+    text-align: left;
+    padding-left: 0;
+    border-left: 0;
+    border-top: 1px solid var(--hair);
+    padding-top: 14px;
+  }
+  .bigscore b { font-size: 36px; }
+  .scorerows { grid-template-columns: minmax(0, 1fr); }
+  .scorerow { grid-template-columns: 78px minmax(0, 1fr); }
+  .scorerail { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .scorerail .railcell:nth-child(odd) { border-left: 0; }
+  .scorerail .railcell:nth-child(even) { border-left: 1px solid var(--hair); }
+  .scorerail .railcell:nth-child(n + 3) { border-top: 1px solid var(--hair); }
+  .dimblock { padding: 16px 14px 12px; }
+  .dimhead { grid-template-columns: auto minmax(0, 1fr); row-gap: 10px; }
+  .dimmeta { grid-column: 1 / -1; }
+  .dimscore { border-left: 0; padding-left: 0; text-align: left; }
+  .dimtable .mbar, .bar-th, .dimtable .mrank, .dimtable .mmedian, .dimtable .mdelta { display: none; }
+  .dimtable .mnum .rankchip { display: inline; }
+  .detailbar { flex-direction: column; align-items: stretch; }
+  .ranknav { justify-content: space-between; }
+}

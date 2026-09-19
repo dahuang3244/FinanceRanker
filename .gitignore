@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# Project data (snapshots, cache, exports)
+data/*.db
+data/cache/
+data/exports/
+!data/exports/.gitkeep
+
+# Config
+.env
+
+build/
+
+dist/
+
+*.spec.bak
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/

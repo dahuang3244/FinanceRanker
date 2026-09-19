@@ -1,0 +1,145 @@
+# Build the desktop app and a Windows installer.
+#
+# Why CI: PyInstaller cannot cross-compile. A macOS machine cannot produce a
+# Windows .exe, and vice versa, so each platform's artifact must be built on that
+# platform. This workflow does the Windows build (and its Inno Setup installer)
+# on a windows-latest runner, and optionally the macOS build.
+#
+# Artifacts produced:
+#   FinanceRanker-windows   dist/FinanceRanker/**        portable folder build
+#   FinanceRanker-setup     dist/*-setup.exe             Windows installer
+#   FinanceRanker-macos     dist/FinanceRanker.app       macOS app bundle
+
+name: build
+
+on:
+  push:
+    branches: [main, master]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  # ------------------------------------------------------------------ Windows
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run the test suite
+        env:
+          PYTHONPATH: .
+        run: |
+          python tests/test_engine.py
+          python tests/test_preview.py
+          python tests/test_sectors.py
+          python tests/test_scale.py
+          python tests/test_health.py
+
+      - name: Build with PyInstaller
+        env:
+          PYTHONPATH: .
+        run: pyinstaller --clean --noconfirm finance_ranker.spec
+
+      - name: Smoke-test the packaged app
+        shell: pwsh
+        env:
+          FR_DATA_DIR: ${{ runner.temp }}\frdata
+          FR_SCHEDULE_HOURS: "0"
+        run: |
+          # Start windowed=no so the runner has no display; the server must come
+          # up and answer, which proves the bundle (incl. the akshare native lib)
+          # is intact.
+          $exe = "dist\FinanceRanker\FinanceRanker.exe"
+          if (-not (Test-Path $exe)) { throw "executable not found at $exe" }
+          $proc = Start-Process -FilePath $exe -ArgumentList "--no-window" -PassThru
+          try {
+            $port = $null
+            for ($i = 0; $i -lt 45; $i++) {
+              Start-Sleep -Seconds 2
+              $log = Join-Path $env:FR_DATA_DIR "launcher.log"
+              if (Test-Path $log) {
+                $m = Select-String -Path $log -Pattern "serving at http://127\.0\.0\.1:(\d+)" |
+                     Select-Object -Last 1
+                if ($m) { $port = $m.Matches[0].Groups[1].Value; break }
+              }
+              if ($proc.HasExited) { throw "process exited early (code $($proc.ExitCode))" }
+            }
+            if (-not $port) { throw "server did not report a port within 90s" }
+            Write-Host "server on port $port"
+
+            $health = Invoke-RestMethod "http://127.0.0.1:$port/api/health" -TimeoutSec 60
+            if ($health.status -ne "ok") { throw "health check failed: $($health.status)" }
+            Write-Host "providers reachable: $($health.probe.reachable -join ', ')"
+
+            # The SPA must actually be served (verifies --add-data worked).
+            $page = Invoke-WebRequest "http://127.0.0.1:$port/" -TimeoutSec 30 -UseBasicParsing
+            if ($page.StatusCode -ne 200) { throw "index.html returned $($page.StatusCode)" }
+            if ($page.Content -notmatch "FinanceRanker") { throw "index.html looks wrong" }
+            Write-Host "smoke test passed"
+          } finally {
+            if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force }
+          }
+
+      - name: Install Inno Setup
+        run: choco install innosetup --no-progress -y
+
+      - name: Build the installer
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { throw "ISCC.exe not found at $iscc" }
+          & $iscc "windows\installer.iss"
+          Get-ChildItem dist\*-setup.exe | Format-Table Name, Length
+
+      - name: Upload portable build
+        uses: actions/upload-artifact@v4
+        with:
+          name: FinanceRanker-windows
+          path: dist/FinanceRanker/**
+          if-no-files-found: error
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: FinanceRanker-setup
+          path: dist/*-setup.exe
+          if-no-files-found: error
+
+  # -------------------------------------------------------------------- macOS
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Build with PyInstaller
+        env:
+          PYTHONPATH: .
+        run: pyinstaller --clean --noconfirm finance_ranker.spec
+
+      - name: Upload macOS app
+        uses: actions/upload-artifact@v4
+        with:
+          name: FinanceRanker-macos
+          path: dist/FinanceRanker.app
+          if-no-files-found: error

@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>排名结果 · FinanceRanker</title>
+<meta name="description" content="1–10 分位打分的科技股同行排名，可筛选、排序并一键导出 CSV / Excel。" />
+<link rel="icon" href="favicon.svg" type="image/svg+xml" />
+<link rel="stylesheet" href="css/shell.css" />
+<link rel="stylesheet" href="css/components.css" />
+</head>
+<body data-page="rk">
+<div class="app">
+  <main class="main">
+    <header class="pagehead">
+      <div>
+        <div class="crumb"><span data-i18n="nav.group">工作台</span><span class="sep">/</span><b data-i18n="nav.ranking">排名结果</b></div>
+        <h1 data-i18n="rk.title">排名结果</h1>
+        <p class="lede" data-i18n="rk.lede">按维度查看分位得分；点任意一行打开单只标的的完整指标明细，含财报来源与非 GAAP 调整桥。</p>
+      </div>
+      <div class="pagehead-actions">
+        <span class="badge" id="sourceBadge">—</span>
+        <span class="faint mono" id="rowMeta" style="font-size:11.5px">—</span>
+        <a class="btn btn--quiet" href="refresh.html" id="toRefresh" data-i18n="action.go.refresh"></a>
+      </div>
+    </header>
+
+    <div class="pagebody">
+      <section class="section">
+        <!-- toolbar -->
+        <div class="glass toolbar">
+          <div class="search">
+            <span id="searchIcon"></span>
+            <input class="input" type="search" id="q" data-i18n-ph="search.placeholder" placeholder="搜索代码或公司名，例如 NVDA / 台积电" autocomplete="off" />
+          </div>
+          <div class="field" style="min-width:150px">
+            <label for="profileFilter" data-i18n="rk.filter.profile">画像</label>
+            <select class="input" id="profileFilter">
+              <option value="" data-i18n="rk.filter.allProfiles">全部画像</option>
+              <option value="leading" data-i18n="profile.leading">领先</option>
+              <option value="strong" data-i18n="profile.strong">强势</option>
+              <option value="average" data-i18n="profile.average">平均</option>
+              <option value="weak" data-i18n="profile.weak">偏弱</option>
+              <option value="lagging" data-i18n="profile.lagging">落后</option>
+            </select>
+          </div>
+          <div class="right">
+            <label class="check"><input type="checkbox" id="eligibleOnly" /> <span data-i18n="rk.filter.eligibleOnly">仅可排名</span></label>
+            <button class="btn btn--quiet" type="button" id="resetFilters" data-i18n="action.reset"></button>
+          </div>
+        </div>
+
+        <!-- view switch + column toggles -->
+        <div class="glass" style="padding:14px 20px;overflow:visible">
+          <div class="row" style="justify-content:space-between">
+            <div class="seg" id="viewSeg" role="group" aria-label="视图"></div>
+            <div class="scale-legend" id="rankLegend"></div>
+            <details class="colpanel">
+              <summary aria-haspopup="true" data-i18n="rk.columns">显示列</summary>
+              <div class="coltoggles" id="colToggles" popover="auto"></div>
+            </details>
+          </div>
+        </div>
+
+        <!-- table -->
+        <div class="tablewrap" id="tableWrap" style="overflow-x:auto">
+          <table class="data ranking" id="table">
+            <colgroup id="cols"></colgroup>
+            <thead><tr id="headRow"></tr></thead>
+            <tbody id="body"></tbody>
+          </table>
+        </div>
+
+        <div id="emptyState"></div>
+      </section>
+
+      <!-- export bar -->
+      <div class="exportbar" id="exportBar" hidden>
+        <span class="cnt"><b id="exportCount">0</b> <span id="exportUnit" data-i18n="common.rows">行</span></span>
+        <button class="btn btn--primary btn--sm" type="button" id="csvBtn" data-i18n="action.export.csv"></button>
+        <button class="btn btn--quiet btn--sm" type="button" id="xlsxBtn" data-i18n="action.export.xlsx"></button>
+        <button class="btn btn--quiet btn--sm" type="button" id="copyBtn" data-i18n="action.copy.table"></button>
+      </div>
+    </div>
+
+    <footer class="foot" data-i18n="rk.foot">
+      <b>分数是池内相对分位，不是绝对质量评分。</b>
+      换一批同行标的，同一个分数会变化；跨快照比较时请先确认股票池一致。
+    </footer>
+  </main>
+</div>
+
+<script src="js/scale.js"></script>
+<script src="js/i18n.js"></script>
+<script src="js/shell.js"></script>
+<script src="js/ranking.js"></script>
+</body>
+</html>
