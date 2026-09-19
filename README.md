@@ -459,6 +459,17 @@ git push -u origin main
 | `FinanceRanker-windows` | 免安装的绿色版目录（整个 `dist/FinanceRanker/`） |
 | `FinanceRanker-macos` | macOS 的 `.app` |
 
+**Artifacts 需要登录才能下载，而且 90 天就过期**，所以安装包另外走 Release 发布：
+
+```bash
+git tag v0.1.0 && git push origin v0.1.0
+```
+
+打 `v*` tag 后，`release` job 会把该 tag 那次构建出的安装包发布到
+**Releases**（[github.com/dahuang3244/FinanceRanker/releases](https://github.com/dahuang3244/FinanceRanker/releases)），
+得到不需要登录、不过期的公开直链。发布用的是**被 tag 的那个 commit** 构建的产物，
+不会出现"源码和二进制对不上"。
+
 工作流在打包**之前**会跑全部测试、并把 Chrome for Testing（win64）下载到
 `vendor/chromium/` 供打包内嵌；打包**之后**会先跑一次 `--selftest` 确认窗口层真的进了包，
 再做冒烟测试（启动冻结的应用 → 等它报出端口 → 校验 `/api/health` 与首页 200），

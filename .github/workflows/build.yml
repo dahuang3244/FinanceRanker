@@ -200,3 +200,35 @@ jobs:
           name: FinanceRanker-macos
           path: dist/FinanceRanker.app
           if-no-files-found: error
+
+  # ------------------------------------------------------------------ release
+  # Artifacts require a GitHub login and expire after 90 days. A release is a
+  # stable public download link, so pushing a v* tag publishes the installer.
+  # This runs on the runner rather than locally because the installer is ~185 MB
+  # and, more importantly, it is built from the very commit being tagged.
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: FinanceRanker-setup
+          path: dist
+
+      - name: Publish the installer
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          ls -la dist
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || \
+            gh release create "$GITHUB_REF_NAME" \
+              --title "FinanceRanker $GITHUB_REF_NAME" \
+              --notes "Windows installer. Self-contained: ships its own Chromium, so it needs neither WebView2 nor an existing Edge/Chrome." \
+              --verify-tag
+          gh release upload "$GITHUB_REF_NAME" dist/*-setup.exe --clobber
+          gh release view "$GITHUB_REF_NAME" --json url,assets \
+            --jq '"release: \(.url)", (.assets[] | "  asset: \(.name) (\(.size) bytes)")'
