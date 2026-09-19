@@ -460,7 +460,11 @@ winget install -e --id JRSoftware.InnoSetup
 
 `windows/installer.iss`：
 
-- **中文优先**的安装向导（`ChineseSimplified.isl`），同时提供英文
+- **中文优先**的安装向导（`ChineseSimplified.isl`），同时提供英文。
+  该翻译文件随仓库放在 `windows/` 下，不再依赖编译器自带——
+  Inno Setup 的 `Languages\` 目录并不保证包含它（CI 用的 chocolatey 6.7.1 就没有），
+  而引用一个不存在的文件会让整个编译中止。脚本用预处理器做了三级兜底：
+  仓库自带 → 编译器自带 → 仅英文。
 - **默认按用户安装**（`PrivilegesRequired=lowest`），不弹 UAC；也可在对话框切到全机器安装
 - 开始菜单 + 可选桌面快捷方式，卸载项齐全
 - **WebView2 按需下载**：Windows 11 / 已更新的 Win10 自带；缺失时才用
@@ -564,6 +568,22 @@ API：`GET /api/providers`（读缓存）、`POST /api/providers/probe`（强制
    `next_run_time=datetime.now()`（本地壁钟时间）会被当成 UTC，
    在 UTC+8 机器上首次执行被推到 **8 小时后**；`str(tzinfo)` 得到 `CST`
    又被 `ZoneInfo` 拒绝。→ 统一用 APScheduler 解析出的真实 IANA 时区。
+11. **在 CI 上真的出一次 `.exe` 才暴露出来的三个打包缺陷**（都只在 Windows 上发作）：
+    - **`EXE(version=...)` 不再接受 dict**。PyInstaller 6.x 抛
+      `TypeError: Unsupported type for version info argument: <class 'dict'>`。
+      因为那段只在 `sys.platform == "win32"` 下构造，macOS 拿到 `None` 一切正常，
+      只有 Windows 构建挂——属于"平台分支里的死代码"，本地永远测不到。
+      → 改用 `PyInstaller.utils.win32.versioninfo` 构造真正的 `VSVersionInfo`；
+      顺带把 macOS 专属的 `argv_emulation` 也限定到 darwin。
+    - **窗口化（`console=False`）的包没有 stderr**，而 uvicorn 默认又自装一个 stderr
+      handler，于是"启动失败"只剩一个退出码 1，任何地方都没有原因。首次运行被杀软扫描
+      拖慢时，启动器 30 秒上限还会直接 `return 1`——间歇性失败最难查。
+      → 启动器在最前面挂上文件日志、用 `log_config=None` 让 uvicorn 走根 handler、
+      记录子线程异常，并把等待上限放宽到 120 秒。
+    - **`compiler:Languages\ChineseSimplified.isl` 并不保证存在**。它自 6.5.0 起才是官方
+      翻译，而且 CI 用的 chocolatey Inno Setup 6.7.1 里就没有；引用不存在的文件会让
+      ISCC 直接中止（`Couldn't open include file`），连英文安装包都产不出来。
+      → 语言文件随仓库走，预处理器按「仓库自带 → 编译器自带 → 仅英文」兜底。
 
 ---
 

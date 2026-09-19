@@ -52,7 +52,9 @@ Remove-Item -Recurse -Force $env:FR_DATA_DIR -ErrorAction SilentlyContinue
 $proc = Start-Process -FilePath "dist\FinanceRanker\FinanceRanker.exe" -ArgumentList "--no-window" -PassThru
 try {
     $port = $null
-    for ($i = 0; $i -lt 45; $i++) {
+    # The launcher gives up after 120 s, so allow longer here to let its own
+    # diagnostic (written to launcher.log) win the race.
+    for ($i = 0; $i -lt 90; $i++) {
         Start-Sleep -Seconds 2
         $log = Join-Path $env:FR_DATA_DIR "launcher.log"
         if (Test-Path $log) {
@@ -61,7 +63,7 @@ try {
         }
         if ($proc.HasExited) { throw "exited early with code $($proc.ExitCode)" }
     }
-    if (-not $port) { throw "server did not report a port within 90s" }
+    if (-not $port) { throw "server did not report a port within 180s" }
     $health = Invoke-RestMethod "http://127.0.0.1:$port/api/health" -TimeoutSec 60
     Write-Host "health: $($health.status) | reachable: $($health.probe.reachable -join ', ')"
     $page = Invoke-WebRequest "http://127.0.0.1:$port/" -TimeoutSec 30 -UseBasicParsing

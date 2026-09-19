@@ -37,7 +37,14 @@ def _free_port(preferred: int = 8848) -> int:
     raise RuntimeError("no free port available")
 
 
-def _wait_for_server(port: int, timeout: float = 30.0) -> bool:
+def _wait_for_server(port: int, timeout: float = 120.0) -> bool:
+    """Wait for the server socket to accept, returning as soon as it does.
+
+    The budget only matters when startup is genuinely slow: the first launch of
+    a freshly installed bundle can spend a long time in OS/antivirus scanning
+    before Python even runs, and a 30 s ceiling killed the app (exit 1) on
+    exactly that -- intermittently, which is worse than reliably.
+    """
     deadline = time.time() + timeout
     while time.time() < deadline:
         try:

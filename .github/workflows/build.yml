@@ -67,7 +67,9 @@ jobs:
           $proc = Start-Process -FilePath $exe -ArgumentList "--no-window" -PassThru
           try {
             $port = $null
-            for ($i = 0; $i -lt 45; $i++) {
+            # The launcher itself gives up after 120 s, so allow longer here to
+            # let its own diagnostic (written to launcher.log) win the race.
+            for ($i = 0; $i -lt 90; $i++) {
               Start-Sleep -Seconds 2
               if (Test-Path $log) {
                 $m = Select-String -Path $log -Pattern "serving at http://127\.0\.0\.1:(\d+)" |
@@ -76,7 +78,7 @@ jobs:
               }
               if ($proc.HasExited) { throw "process exited early (code $($proc.ExitCode))" }
             }
-            if (-not $port) { throw "server did not report a port within 90s" }
+            if (-not $port) { throw "server did not report a port within 180s" }
             Write-Host "server on port $port"
 
             $health = Invoke-RestMethod "http://127.0.0.1:$port/api/health" -TimeoutSec 60

@@ -42,8 +42,23 @@ PrivilegesRequiredOverridesAllowed=dialog
 UninstallDisplayIcon={app}\{#MyAppExeName}
 
 [Languages]
-; Chinese first: this is a Chinese-language tool. Both files ship with Inno Setup.
+; Chinese first: this is a Chinese-language tool.
+;
+; The translation is bundled next to this script rather than taken from the
+; compiler's Languages directory, because that directory does not reliably
+; contain it (the chocolatey Inno Setup 6.7.1 used by CI does not) and a
+; reference to a missing file aborts the whole compile. Preprocessor guards
+; fall back to the compiler's own copy, then to English-only, so the installer
+; still builds on a compiler that ships neither.
+#define BundledChineseIsl SourcePath + "\ChineseSimplified.isl"
+#define CompilerChineseIsl CompilerPath + "\Languages\ChineseSimplified.isl"
+#if FileExists(BundledChineseIsl)
+Name: "chinesesimplified"; MessagesFile: "{#BundledChineseIsl}"
+#else
+#if FileExists(CompilerChineseIsl)
 Name: "chinesesimplified"; MessagesFile: "compiler:Languages\ChineseSimplified.isl"
+#endif
+#endif
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
