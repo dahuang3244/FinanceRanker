@@ -76,16 +76,68 @@ excludes = [
 
 block_cipher = None
 
-# Windows file properties. Harmless on other platforms (ignored by PyInstaller).
+# Windows file properties (shown in Explorer's Details tab and used by the
+# uninstaller entry). Harmless on other platforms: `version` is Windows-only and
+# PyInstaller warns and ignores it elsewhere, so it stays None off Windows.
+#
+# It must be a `VSVersionInfo` object (or a path to a version-resource file).
+# A plain dict -- which older PyInstaller accepted -- now raises
+# "TypeError: Unsupported type for version info argument: <class 'dict'>",
+# and because the dict was built under `if sys.platform == "win32"` the failure
+# only ever appeared on the Windows runner.
+APP_VERSION = "0.1.0"
+
 version_info = None
 if sys.platform == "win32":
-    version_info = {
-        "version": "0.1.0",
-        "description": "FinanceRanker — 免费公开数据科技股同行排名",
-        "product": "FinanceRanker",
-        "company": "FinanceRanker",
-        "copyright": "Research screen; not investment advice.",
-    }
+    from PyInstaller.utils.win32.versioninfo import (
+        FixedFileInfo,
+        StringFileInfo,
+        StringStruct,
+        StringTable,
+        VarFileInfo,
+        VarStruct,
+        VSVersionInfo,
+    )
+
+    _v = tuple(int(p) for p in APP_VERSION.split(".")) + (0,)  # -> (0, 1, 0, 0)
+    version_info = VSVersionInfo(
+        ffi=FixedFileInfo(
+            filevers=_v,
+            prodvers=_v,
+            mask=0x3F,
+            flags=0x0,
+            OS=0x40004,      # VOS_NT_WINDOWS32
+            fileType=0x1,    # VFT_APP
+            subtype=0x0,
+            date=(0, 0),
+        ),
+        kids=[
+            StringFileInfo(
+                [
+                    StringTable(
+                        "040904B0",  # US English, Unicode (codepage 1200)
+                        [
+                            StringStruct("CompanyName", "FinanceRanker"),
+                            StringStruct(
+                                "FileDescription",
+                                "FinanceRanker — 免费公开数据科技股同行排名",
+                            ),
+                            StringStruct("FileVersion", f"{APP_VERSION}.0"),
+                            StringStruct("InternalName", "FinanceRanker"),
+                            StringStruct(
+                                "LegalCopyright",
+                                "Research screen; not investment advice.",
+                            ),
+                            StringStruct("OriginalFilename", "FinanceRanker.exe"),
+                            StringStruct("ProductName", "FinanceRanker"),
+                            StringStruct("ProductVersion", f"{APP_VERSION}.0"),
+                        ],
+                    )
+                ]
+            ),
+            VarFileInfo([VarStruct("Translation", [0x0409, 1200])]),
+        ],
+    )
 
 a = Analysis(
     ["desktop.py"],
@@ -119,7 +171,9 @@ exe = EXE(
     # frozen. Build with --console via CONSOLE=1 for a diagnostic variant.
     console=bool(os.environ.get("CONSOLE")),
     disable_windowed_traceback=False,
-    argv_emulation=True,    # lets macOS open URLs/files onto the app
+    # macOS-only option; a Windows build would otherwise carry a meaningless
+    # `pyi-macos-argv-emulation` TOC entry.
+    argv_emulation=(sys.platform == "darwin"),
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
