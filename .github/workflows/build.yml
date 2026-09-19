@@ -62,12 +62,13 @@ jobs:
           # is intact.
           $exe = "dist\FinanceRanker\FinanceRanker.exe"
           if (-not (Test-Path $exe)) { throw "executable not found at $exe" }
+          $log = Join-Path $env:FR_DATA_DIR "launcher.log"
+          Remove-Item -Recurse -Force $env:FR_DATA_DIR -ErrorAction SilentlyContinue
           $proc = Start-Process -FilePath $exe -ArgumentList "--no-window" -PassThru
           try {
             $port = $null
             for ($i = 0; $i -lt 45; $i++) {
               Start-Sleep -Seconds 2
-              $log = Join-Path $env:FR_DATA_DIR "launcher.log"
               if (Test-Path $log) {
                 $m = Select-String -Path $log -Pattern "serving at http://127\.0\.0\.1:(\d+)" |
                      Select-Object -Last 1
@@ -87,6 +88,15 @@ jobs:
             if ($page.StatusCode -ne 200) { throw "index.html returned $($page.StatusCode)" }
             if ($page.Content -notmatch "FinanceRanker") { throw "index.html looks wrong" }
             Write-Host "smoke test passed"
+          } catch {
+            # The app is built windowed, so launcher.log is the only place a
+            # startup failure is recorded. Always surface it before failing.
+            Write-Host "::group::launcher.log ($log)"
+            if (Test-Path $log) { Get-Content $log } else { Write-Host "(no launcher.log was written)" }
+            $data = Get-ChildItem -Recurse -Force $env:FR_DATA_DIR -ErrorAction SilentlyContinue
+            if ($data) { Write-Host "`nFR_DATA_DIR contents:"; $data | Select-Object FullName, Length | Out-String | Write-Host }
+            Write-Host "::endgroup::"
+            throw
           } finally {
             if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force }
           }

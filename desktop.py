@@ -48,13 +48,50 @@ def _wait_for_server(port: int, timeout: float = 30.0) -> bool:
     return False
 
 
+# Filled in by `_serve` when the server thread dies before it can listen, so the
+# launcher can report *why* instead of a bare "did not come up".
+_serve_error: list[BaseException] = []
+
+
 def _serve(port: int) -> None:
-    import uvicorn
+    try:
+        import uvicorn
 
-    # Imported inside the thread so PyInstaller's analysis still sees it.
-    from app.main import app
+        # Imported inside the thread so PyInstaller's analysis still sees it.
+        from app.main import app
 
-    uvicorn.run(app, host="127.0.0.1", port=port, log_level="warning")
+        # log_config=None leaves our own root handlers in charge. uvicorn's
+        # default config installs a stderr handler, and a windowed
+        # (console=False) PyInstaller build has no stderr at all -- which is
+        # exactly how a startup failure turns into a silent exit code 1.
+        uvicorn.run(app, host="127.0.0.1", port=port, log_config=None, log_level="info")
+    except Exception as exc:  # noqa: BLE001 - a startup failure must never be silent
+        _serve_error.append(exc)
+        log.exception("server thread failed")
+
+
+def _install_file_logging() -> Path | None:
+    """Send logs to a file as early as possible.
+
+    A frozen windowed build has no stdout/stderr, so anything logged before this
+    runs -- including a failure to start the server -- would otherwise vanish.
+    """
+    if not getattr(sys, "frozen", False):
+        return None
+    try:
+        from app.config import DATA_DIR
+
+        log_path = Path(DATA_DIR) / "launcher.log"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        handler = logging.FileHandler(log_path, encoding="utf-8")
+        handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+        root = logging.getLogger()
+        root.addHandler(handler)
+        root.setLevel(logging.INFO)
+        return log_path
+    except Exception:  # pragma: no cover - best effort only
+        logging.getLogger(__name__).exception("could not open launcher.log")
+        return None
 
 
 def main() -> int:
@@ -62,16 +99,20 @@ def main() -> int:
         level=logging.INFO, format="%(levelname)s %(name)s: %(message)s"
     )
 
-    # A frozen build has no console; keep logs next to the user's data.
-    if getattr(sys, "frozen", False):
-        from app.config import DATA_DIR
-
-        log_path = Path(DATA_DIR) / "launcher.log"
-        log_path.parent.mkdir(parents=True, exist_ok=True)
-        handler = logging.FileHandler(log_path, encoding="utf-8")
-        handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
-        logging.getLogger().addHandler(handler)
+    log_path = _install_file_logging()
+    if log_path is not None:
         log.info("frozen launch, logging to %s", log_path)
+
+    # A crash inside the server thread is reported through threading's hook,
+    # which writes to stderr -- absent in a windowed build, so route it to ours.
+    def _thread_excepthook(args: threading.ExceptHookArgs) -> None:
+        log.error(
+            "unhandled exception in thread %s",
+            args.thread.name if args.thread else "?",
+            exc_info=(args.exc_type, args.exc_value, args.exc_traceback),
+        )
+
+    threading.excepthook = _thread_excepthook
 
     port = _free_port()
     url = f"http://127.0.0.1:{port}/"
@@ -80,7 +121,15 @@ def main() -> int:
     thread.start()
 
     if not _wait_for_server(port):
-        log.error("server did not come up on port %s", port)
+        if _serve_error:
+            log.error(
+                "server did not come up on port %s (%s: %s)",
+                port,
+                type(_serve_error[0]).__name__,
+                _serve_error[0],
+            )
+        else:
+            log.error("server did not come up on port %s", port)
         return 1
     log.info("serving at %s", url)
 
