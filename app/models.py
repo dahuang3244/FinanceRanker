@@ -48,6 +48,26 @@ class Quote(BaseModel):
     as_of: datetime | None = None
 
 
+class AnalystView(BaseModel):
+    """Sell-side consensus, kept separate from the quote.
+
+    The consensus is a dated survey, not a live price, and mixing it into the
+    quote would blur which provider a field came from.
+    """
+
+    ticker: str
+    target_mean: float | None = None
+    target_median: float | None = None
+    target_high: float | None = None
+    target_low: float | None = None
+    analyst_count: float | None = None
+    recommendation: str | None = None
+    forward_pe: float | None = None
+    yahoo_beta: float | None = None
+    source: str = ""
+    as_of: datetime | None = None
+
+
 class FactSeries(BaseModel):
     """One annual figure series (newest first)."""
 
@@ -65,12 +85,23 @@ class FactSeries(BaseModel):
         return self.points[index][1] if len(self.points) > index else None
 
     def aligned(self, end: date | None, tolerance_days: int = 120) -> float | None:
-        """Latest value, but only when it lines up with the chosen fiscal year."""
+        """Value for the period ending at `end`, when one exists.
+
+        Scans the whole series rather than only the newest point: a filer whose
+        latest tagged period sits outside the tolerance (Oracle's fiscal year
+        ends May 31 and its newest comparatives can lag the anchor) would
+        otherwise return a blank even though the matching period is present.
+        Picking the *nearest* end also avoids borrowing a period that is close
+        but wrong.
+        """
         if end is None or not self.points:
             return None
-        if abs((end - self.points[0][0]).days) > tolerance_days:
-            return None
-        return self.points[0][1]
+        best: tuple[int, float] | None = None
+        for point_end, value in self.points:
+            delta = abs((end - point_end).days)
+            if delta <= tolerance_days and (best is None or delta < best[0]):
+                best = (delta, value)
+        return best[1] if best else None
 
 
 class Fundamentals(BaseModel):
@@ -99,6 +130,9 @@ class Fundamentals(BaseModel):
     shares_diluted: FactSeries | None = None
     shares_outstanding: float | None = None
     shares_basis: str = ""
+    reporting_currency: str | None = None
+    fx_usd_per_twd: float | None = None
+    fx_source: str | None = None
     sbc: FactSeries | None = None
     restructuring: FactSeries | None = None
     amortization: FactSeries | None = None
@@ -119,31 +153,82 @@ class MetricRow(BaseModel):
     ticker: str
     company: str | None = None
     currency: str = "USD"
+    filing_currency: str | None = None
+    fx_usd_per_twd: float | None = None
+    fx_source: str | None = None
     status: str = "pending"
     notes: str = ""
 
-    # market
+    # market — quoted returns (calendar windows, benchmark-relative where noted)
     price: float | None = None
     high_52w: float | None = None
     low_52w: float | None = None
     market_cap: float | None = None
+    return_1m: float | None = None
+    return_3m: float | None = None
+    return_6m: float | None = None
     return_1y: float | None = None
+    return_ytd: float | None = None
+    return_3y: float | None = None
+    excess_return_1m: float | None = None
+    excess_return_3m: float | None = None
+    excess_return_6m: float | None = None
+    excess_return_1y: float | None = None
+    excess_return_ytd: float | None = None
+    benchmark_ticker: str | None = None
+    benchmark_return_3m: float | None = None
+    benchmark_return_6m: float | None = None
+    benchmark_return_1y: float | None = None
+    benchmark_as_of: date | None = None
+
+    # market — risk (annualised, trailing year of daily returns)
     beta: float | None = None
+    beta_1y: float | None = None
+    volatility: float | None = None
+    downside_deviation: float | None = None
+    sharpe_ratio: float | None = None
+    sortino_ratio: float | None = None
+    max_drawdown_1y: float | None = None
+    drawdown_52w: float | None = None
+    risk_obs_days: int | None = None
+
+    # market — risk-free assumption actually used for Sharpe/Sortino
+    risk_free_rate: float | None = None
+    market_price_basis: str | None = None
 
     # fundamentals / derived
     revenue_fy0: float | None = None
     revenue_growth_yoy: float | None = None
     revenue_cagr_5y: float | None = None
+    revenue_cagr_3y: float | None = None
     gross_margin: float | None = None
     operating_margin: float | None = None
     net_margin: float | None = None
     roe: float | None = None
     roic: float | None = None
+    roa: float | None = None
     fcf_fy0: float | None = None
     fcf_margin: float | None = None
     fcf_yield: float | None = None
     ocf_to_net_income: float | None = None
     debt_to_assets: float | None = None
+    net_income_fy0: float | None = None
+    eps_growth_yoy: float | None = None
+    net_income_growth_yoy: float | None = None
+    gross_profit_growth_yoy: float | None = None
+    fcf_growth_yoy: float | None = None
+    operating_leverage: float | None = None
+    asset_turnover: float | None = None
+    capex_intensity: float | None = None
+    cash_to_assets: float | None = None
+    sbc_pct_revenue: float | None = None
+    price_to_ocf: float | None = None
+    ev_to_sales: float | None = None
+    peg_ratio: float | None = None
+    net_debt_to_ebitda: float | None = None
+    interest_cover: float | None = None
+    net_debt_fy0: float | None = None
+    ebitda_fy0: float | None = None
 
     # per-share bridge
     gaap_eps: float | None = None
@@ -170,6 +255,13 @@ class MetricRow(BaseModel):
     drawdown_52w: float | None = None
     analyst_target: float | None = None
     analyst_upside: float | None = None
+    analyst_target_median: float | None = None
+    analyst_target_high: float | None = None
+    analyst_target_low: float | None = None
+    analyst_count: float | None = None
+    analyst_recommendation: str | None = None
+    analyst_source: str = ""
+    beta_published: float | None = None
 
     # provenance
     source_quality: str = ""
@@ -196,6 +288,9 @@ class MetricRow(BaseModel):
     equity_fy0: float | None = None
     ocf_fy0: float | None = None
     capex_fy0: float | None = None
+    capex_basis: str = ""
+    debt_basis: str = ""
+    margin_basis: str = ""
     share_basis: str = ""
     total_assets_fy0: float | None = None
     gross_profit_fy0: float | None = None
@@ -222,9 +317,23 @@ class MetricRow(BaseModel):
     z_price_book: float | None = None
     z_price_fcf: float | None = None
     z_return_1y: float | None = None
+    z_return_3m: float | None = None
+    z_excess_return_6m: float | None = None
     z_debt_assets: float | None = None
     z_drawdown: float | None = None
+    # Retained for snapshots written before `beta` stopped being scored; the
+    # scored field is `z_beta_1y`.
     z_beta: float | None = None
+    z_return_6m: float | None = None
+    z_excess_return_3m: float | None = None
+    z_volatility: float | None = None
+    z_sharpe: float | None = None
+    z_max_drawdown: float | None = None
+    z_sortino: float | None = None
+    z_beta_1y: float | None = None
+    z_excess_return_1y: float | None = None
+    z_roa: float | None = None
+    z_capex_intensity: float | None = None
 
     score_growth: float | None = None
     score_profitability: float | None = None
@@ -233,12 +342,19 @@ class MetricRow(BaseModel):
     score_market: float | None = None
     score_overall: float | None = None
     data_coverage: int = 0
+    coverage_pct: float | None = None
     rank_eligible: bool = False
     rank: int | None = None
     profile: str = ""
 
     fetched_at: datetime | None = None
     elapsed_ms: int | None = None
+
+    # Which metric generation produced this row. A snapshot written by an older
+    # build lacks the newer columns, and silently rendering it as blanks is
+    # indistinguishable from a data-source failure — so the value travels with
+    # the row and the API reports the mismatch explicitly.
+    metrics_version: int = 0
 
 
 class RefreshRequest(BaseModel):

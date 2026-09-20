@@ -1,10 +1,7 @@
-"""Desktop launcher: run the FastAPI service and show it in a native window.
+"""Desktop launcher: run the FastAPI service and open its local web interface.
 
-This is the packaged-app entry point. It does **not** bundle a browser: it uses
-the operating system's own webview (WKWebView on macOS, WebView2 on Windows,
-WebKitGTK on Linux) via pywebview. That keeps the app around the size of the
-Python runtime rather than the ~150 MB a bundled Chromium would add, and it
-avoids a second engine that could drift from the system one.
+Windows uses the default browser; its bundled Chrome for Testing is an
+explicit backup. macOS/Linux can use a native pywebview window.
 
 The server binds to 127.0.0.1 on a free port and the window points at it, so the
 app is a normal local web app — the same code path as `uvicorn app.main:app`.
@@ -231,18 +228,27 @@ def main() -> int:
         return _serve_forever()
 
     # ---- window layer -----------------------------------------------------
-    # On Windows the bundled Chromium is driven directly as a subprocess.
+    # On Windows Chrome for Testing remains packaged as a fallback; launch the
+    # user's regularly updated default browser first to avoid the testing-only
+    # notice and its non-updating profile. `--bundled-browser` opts back in.
     # pywebview is deliberately not used there: its WinForms backend goes
     # through pythonnet, whose Python.Runtime.dll cannot be loaded from a frozen
     # bundle ("Failed to resolve Python.Runtime.Loader.Initialize"). Native
     # window on macOS, where WKWebView has no such dependency.
-    if sys.platform == "win32" and "--browser" not in sys.argv:
+    if sys.platform == "win32":
+        if "--bundled-browser" not in sys.argv:
+            try:
+                if webbrowser.open(url):
+                    log.info("opened the system default browser")
+                    return _serve_forever()
+            except Exception:
+                log.exception("system browser failed; trying bundled browser")
         try:
             if _open_browser_window(url):
                 return 0
-            log.warning("this build has no bundled browser; using the system one")
+            log.warning("this build has no bundled browser")
         except Exception:  # noqa: BLE001 - the window must never kill the app
-            log.exception("the bundled browser failed; using the system one")
+            log.exception("the bundled browser failed")
         webbrowser.open(url)
         return _serve_forever()
 

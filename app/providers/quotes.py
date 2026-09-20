@@ -176,7 +176,9 @@ def get_quote(ticker: str, *, allow_yahoo: bool | None = None) -> Quote:
             for field in result.model_fields:
                 if getattr(best, field, None) in (None, "", 0) and getattr(result, field, None):
                     setattr(best, field, getattr(result, field))
-        if best.price and best.market_cap:
+        # Keep going when Yahoo is available: early quotes often omit the
+        # forward EPS and guidance-derived estimates needed for P/E.
+        if best.price and best.market_cap and not allow_yahoo:
             break
 
     if best is None:

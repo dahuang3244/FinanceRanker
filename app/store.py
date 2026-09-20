@@ -136,9 +136,33 @@ def load_run(run_id: str) -> list[MetricRow]:
 
 
 def latest_run_id() -> str | None:
+    """The snapshot holding the newest data.
+
+    Resolved from `snapshots.captured_at`, not from a clock column on `runs`.
+    Ordering by a run timestamp is unreliable for two independent reasons:
+    concurrent refreshes can finish out of order, and rows written by different
+    builds may have been stamped in different timezones (a local-time build and
+    a UTC build produce stamps that are not comparable). `captured_at` sits on
+    the row actually being served, so it says which rows are newest.
+
+    "Newest" is preferred over "most complete" on purpose: a staleness check
+    downstream (`app.main._staleness`) already detects a snapshot written before
+    the current metric set and tells the viewer to refresh, and that check is
+    visible. Preferring completeness here instead would silently hide newer
+    prices behind an older, richer snapshot — a worse failure, because nothing
+    on screen would reveal it.
+    """
     init_db()
     with _connect() as conn:
-        row = conn.execute("SELECT run_id FROM runs ORDER BY started_at DESC LIMIT 1").fetchone()
+        row = conn.execute(
+            "SELECT run_id FROM snapshots ORDER BY captured_at DESC LIMIT 1"
+        ).fetchone()
+        if row:
+            return row["run_id"]
+        # No snapshot rows yet: fall back to the run bookkeeping.
+        row = conn.execute(
+            "SELECT run_id FROM runs ORDER BY finished_at DESC, started_at DESC LIMIT 1"
+        ).fetchone()
         return row["run_id"] if row else None
 
 

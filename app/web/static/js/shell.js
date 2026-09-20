@@ -89,6 +89,9 @@ const FR = (() => {
     run: (id) => api.get(`/api/runs/${encodeURIComponent(id)}`),
     dropRun: (id) => api.del(`/api/runs/${encodeURIComponent(id)}`),
     ranking: (opts = {}) => api.get("/api/ranking", opts),
+    // The metric catalogue: which metrics exist, their component and whether
+    // the backend scores them. Drives the company detail blocks.
+    metrics: () => api.get("/api/metrics"),
     history: (ticker, limit = 60) => api.get(`/api/history/${encodeURIComponent(ticker)}`, { limit }),
     jobs: (limit = 20) => api.get("/api/jobs", { limit }),
     job: (id) => api.get(`/api/jobs/${encodeURIComponent(id)}`),
@@ -332,7 +335,7 @@ const FR = (() => {
     const rail = el("aside", { class: "rail", id: "rail", "aria-label": t("nav.group") });
     rail.innerHTML = `
       <a class="brand" href="index.html">
-        <span class="mark">FR</span>
+        <img class="mark" src="favicon.svg" alt="" width="36" height="36" />
         <span class="txt">
           <b>FinanceRanker</b>
           <span data-i18n="brand.sub">${t("brand.sub")}</span>
@@ -368,7 +371,7 @@ const FR = (() => {
         data-i18n-aria="nav.group" aria-label="${escapeHtml(t("nav.group"))}">
         ${icon("menu")}
       </button>
-      <span class="mark">FR</span>
+      <img class="mark" src="favicon.svg" alt="" width="30" height="30" />
       <b data-i18n="${current.i18n}">${t(current.i18n)}</b>
       <span class="spacer"></span>
       <button class="langbtn" type="button" data-fr-lang-toggle>${FRI18n.current() === "zh" ? "EN" : "中文"}</button>

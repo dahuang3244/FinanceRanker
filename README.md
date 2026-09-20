@@ -27,7 +27,7 @@
 
 | 用途 | 主源 | 备源 | 说明 |
 |---|---|---|---|
-| 年度财报 | **SEC XBRL `companyfacts`** | akshare（东方财富财报） | 官方权威，数值与原工作簿**完全一致** |
+| 年度财报 | **SEC XBRL `companyfacts`** | Yahoo 年度财报（同财年缺项）→ akshare | 保留字段来源；缺失年份不臆造 |
 | 日线行情 | **新浪财经 US 日 K** | akshare/东财、雅虎 | 回溯到上市首日，含复权 |
 | 实时报价 | **腾讯 `qt.gtimg.cn`** | 东财、雅虎 | 一次返回价格/市值/股本/PE 等 73 字段 |
 
@@ -103,6 +103,13 @@ FR_YAHOO_MODE=auto        # auto=探测通就用 / on / off
 | `GET` | `/api/jobs/{id}` | 任务状态（轮询兜底） |
 | `GET` | `/api/ranking` | 排名结果（可带 `job_id` / `run_id` / `eligible_only`） |
 | `GET` | `/api/ticker/{ticker}` | 单只明细 |
+| `GET` | `/api/insights/{ticker}` | 趋势、可追溯总结、财报日期提示与新闻标题温度；支持 `job_id` / `run_id` |
+
+公司明细新增数据提示：3 个月回报使用足够跨度的日线，52 周回撤按同一价格口径的收盘价与收盘高点计算；20/50/200 日均线与 RSI(14) 均从标注日期的价格序列计算。TSM 优先使用 SEC 台币财报，Yahoo `2330.TW` 台币年报只补同财年缺项，之后按原有 5:1 ADS 比例和汇率换算。缺失的资本支出不按 0 处理：先尝试发行人披露，仍取不到时用折旧摊销的一半作保守替代，并在 `capex_basis` 中写明依据（参见 §5）。
+
+TSM 现金流进一步补缺：2025 财年采用[台积电合并财务报告](https://investor.tsmc.com/sites/ir/financial-report/2025/TSMC%202025Q4%20Consolidated%20Financial%20Statements_E.pdf)中经营现金流 NT$2,274,975,625 千元和购置不动产、厂房及设备支出 NT$1,272,410,529 千元，计算 FCF 为 NT$1,002,565,096 千元、FCF 利润率约 26.32%。同口径 FCF 换算为美元后再计算 FCF 收益率和市值/FCF。仅当财报日期为 2025-12-31 且报表币种为台币时使用这些已核对的数值；之后财年尝试自动读取台积电官网该年度合并财报 PDF，不能获取时保留空值而不会沿用 2025 年数据。3 个月回报优先调用完整的 akshare/Sina 调整后美国 ADR 日线以补足短历史记录。**更新旧快照请重新执行抓取任务**。
+
+财报提示只显示 Yahoo 日历中可取得的未来**预估日期**，需以公司公告核对；取不到则显示日期未核实。新闻温度来自 Google News RSS 近 90 天标题，至少两条含方向词才计算，不能当作全文情感分析或交易信号。公司回报／风险面板的 1–7 分是现有同行分位的可解释映射，`n/N` 标明数据覆盖，新闻不参与排序。更新已有快照里的 3 个月回报或 FCF 时，请重新运行抓取并排名。
 | `GET` | `/api/export/csv` | **一键下载 CSV**（按 Identity / Market / Growth / … / Scoring 分节） |
 | `GET` | `/api/export/detail?ticker=MSFT` | **单只标的明细 CSV**（Meta / 维度得分 / 逐项同行中位与名次 / 计算输入） |
 | `GET` | `/api/export/xlsx` | 下载 Excel（8 个 sheet，兼容原模板） |
@@ -194,13 +201,70 @@ FR_YAHOO_MODE=auto        # auto=探测通就用 / on / off
 **指标**（对齐原 `Data Cache` L..AT）：营收及其同比/5年CAGR、毛利率、营业利润率、净利率、
 ROE、ROIC、自由现金流及其利润率/收益率、现金转化、资产负债率、GAAP EPS、
 非GAAP 调整桥（SBC/重组/摊销 税后每股）、调整后 EPS、Forward P/E、P/S、EV/EBITDA、
-P/B、P/FCF、1年回报、52周回撤、Beta。
+P/B、P/FCF。
+
+**行情与风险指标**分为三段，目的是让**每只股票在加入后都拿到同一套数字**，可以直接横向比较：
+
+- **回报**：1 个月、3 个月、6 个月、1 年、年初至今、3 年（复权总回报）。
+- **相对 SPY**：3 个月 / 6 个月 / 1 年的超额回报，以及 SPY 自身的同期回报（用于对账）。
+- **风险**：年化波动率、下行波动率、夏普比率、索提诺比率、Beta、
+  近一年最大回撤、距 52 周高点回撤。
+- **卖方一致预期**：目标均价 / 中位数 / 最高 / 最低、覆盖分析师数、评级、上行空间。
+
+**为四个基本面维度补充的指标**（`roa`、`capex_intensity` 计入评分，其余标为「参考」）：
+
+| 维度 | 新增指标 | 回答什么问题 |
+|---|---|---|
+| 成长 | 营收 3Y CAGR、EPS 同比、净利润同比、毛利同比、FCF 同比 | 增速是新出现的还是持续的？利润与现金流有没有跟上营收？ |
+| 盈利 | ROA、资产周转率、经营杠杆 | 赚钱靠的是资产效率还是杠杆？毛利率在扩张吗？ |
+| 现金 | 资本开支强度、现金/总资产、股权激励/营收 | FCF 低是因为在重投入，还是因为收不回现金？摊薄成本有多高？ |
+| 估值 | PEG、EV/营收、市值/经营现金流、净负债/EBITDA | 高倍数有没有增速支撑？EBITDA 失真时的替代口径是什么？ |
+
+**「参考」不等于不重要**：这些指标展示、导出、参与同行排名，但**不进入加权总分**，
+每一条都在 `/api/metrics` 里写明「为什么不计分」（例如 PEG 在增速为负时无定义）。
+界面上它们带 `参考` 标签、得分列写「不计分」而不是留空——留空与「得分很低」看起来一模一样。
+
+**指标目录是唯一事实来源**：`GET /api/metrics` 返回 52 项指标的定义（维度、方向、
+格式、是否计分、不计分的原因），公司明细页的五个维度块完全由它构建。
+此前前端自带一份手写指标清单，后端改了评分范围而前端没跟上，
+结果就是 Beta 和 1 年超额回报的得分列一片空白而且没有任何解释。现在由
+`tests/test_metric_catalog.py` 锁死这个不变量：目录、评分范围、z 字段、
+双语标签、前端渲染必须一致。
 
 **打分**（对齐 `Scoring` sheet）：每项指标在股票池内做 1–10 分位打分，按 5 个维度
-（成长/盈利/现金/估值/市场）平均，再按权重 `25/25/20/20/10` 合成总分。
-覆盖度不足（<12/21 项或维度缺失）则标记为不可排名。
+（成长/盈利/现金/估值/市场）平均，再按权重 `20/15/20/25/20` 合成总分。
+市场维度同时看**回报**（3M/6M/1Y 回报、3M/6M 相对 SPY 超额）与**风险**
+（夏普、索提诺、波动率、Beta、最大回撤、52 周回撤），共 11 项；
+只奖励回报而不惩罚风险，会让波动最大的标的仅因为涨得多而排前面。
+资产负债率归入现金质量。为避免负收益公司的负市盈率被误当作便宜，非正估值倍数不参与对应估值项。
+权重是探索性的比较口径，不是对未来收益的预测；若用于投资判断，应先做样本外回测。
+覆盖度不足（<12/29 项或维度缺失）则标记为不可排名；
+`data_coverage` / `coverage_pct` 会显示到底缺了哪几项。
 
-**Beta** 用与 SPY 对齐的日收益率协方差/方差计算，最少 30 个观测。
+**口径必须说清楚**，否则数字之间不可比：
+
+- **价格口径**：开盘先确定本次运行的价格基准——若雅虎可达，个股与 SPY 都取
+  `adjclose`（含分红、拆股，即总回报）；否则两者都退到新浪口径（仅拆股调整）。
+  两侧必须同口径，否则超额回报会凭空多出或少掉一个股息率。
+  实际口径写在 `market_price_basis` 与行备注里。
+- **Beta**：`cov(个股, SPY) / var(SPY)`，最少 30 个观测。`beta` 用全部可得历史
+  （与供应商口径一致，仅展示）；参与打分的是 `beta_1y`，与夏普/波动率同期。
+  注意：早期版本误用了个股方差作分母，等价于相关系数，已修正。
+- **夏普 / 索提诺**：用近一年日收益率，无风险利率由 `FR_RISK_FREE` 统一设定
+  （默认 4%）。必须全池同一数值，否则比率不可比。实际取值写在 `risk_free_rate`。
+- **窗口长度**：3M/6M/1Y 是自然日窗口，且要求实际覆盖足够长（3M≥70 天、6M≥150 天、
+  1Y≥300 天），避免把两周的行情说成一个季度。
+
+**数据缺口**按“先补齐、补不上就说明”的原则处理，绝不静默留空：
+
+- 未打标的 capex（常见于 IFRS 外国私人发行人）用**折旧摊销的一半**作保守替代，
+  依据写入 `capex_basis`。
+- 未打标的借款用**总负债（资产 − 权益）**作上限替代，依据写入 `debt_basis`。
+- 未打标的成本行使毛利率无法自下而上计算时，用**营收 − 营业利润**作为上限
+  （会高估，因为未扣研发与销售管理费用），依据写入 `margin_basis`。
+- 外国私人发行人（如 TSM）的 TWD 报表按即期汇率折算为 USD、普通股 ÷5 换算为 ADS，
+  权益类比率（毛利/营业/净利率、FCF 利润率、资产周转、资产负债率）不受汇率影响，
+  在跨币种保护后重新计算，因此不会因为“报表币种不同”而整列留空。
 
 ---
 
@@ -224,14 +288,15 @@ app/
 ├── providers/
 │   ├── fundamentals.py     SEC XBRL（US-GAAP + IFRS）→ akshare 兜底
 │   ├── akshare_us.py       akshare 美股接口封装（日线 / 三大报表 / 分析指标）
-│   ├── prices.py           新浪 → akshare/东财 → 雅虎
-│   └── quotes.py           腾讯 → 东财 → 雅虎
+│   ├── prices.py           新浪 → akshare/东财 → 雅虎（按价格口径筛选 provider）
+│   ├── quotes.py           腾讯 → 东财 → 雅虎
+│   └── yahoo_analyst.py    雅虎分析师一致预期（crumb 鉴权，失败即静默跳过）
 ├── engine/
 │   ├── metrics.py          指标引擎（对应 Excel 公式）
-│   ├── market.py           收益率 / Beta / 回撤
+│   ├── market.py           回报窗口 / 波动率 / 夏普 / 索提诺 / 最大回撤 / Beta
 │   └── scoring.py          分位打分与加权合成
 ├── exporters/
-│   ├── csv_export.py       全池 CSV（按维度分节，84 列）
+│   ├── csv_export.py       全池 CSV（按维度分节，116 列 / 13 节）
 │   ├── detail_export.py    单只明细 CSV（对齐 Stock Detail sheet）
 │   └── excel_export.py     Excel（8 sheet，兼容原模板）
 └── web/static/             前端（原生 HTML/CSS/JS，无构建步骤、无第三方依赖）
@@ -249,8 +314,9 @@ app/
 
 desktop.py                 桌面入口：起本地服务 + 原生窗口（系统 webview）
 finance_ranker.spec        PyInstaller 配置（含 py_mini_racer 原生库与静态资源）
-windows/installer.iss      Inno Setup 安装包脚本（中文向导 + WebView2 按需下载）
-windows/build.ps1          Windows 本地一键构建（测试 → 打包 → 冒烟 → 安装包）
+windows/installer.iss      Inno Setup 安装包脚本（中英文向导 + 随包备用浏览器）
+windows/build.ps1          Windows 本地构建（测试 → 打包 → 冒烟 → 安装包）
+Build-Windows.cmd          Windows 双击构建入口
 .github/workflows/build.yml  CI：在 Windows / macOS 上各自出包
 ```
 
@@ -347,8 +413,8 @@ PYTHONPATH=. python tests/test_scale.py
 | 区块 | 内容 |
 |---|---|
 | 头部 | 代码 / 公司 / 画像 / 排名 / 覆盖度 + 总分，五维得分横排 |
-| 得分轨 | 五维得分 + 总分，各自带权重（25/25/20/20/10） |
-| 维度块 ×5 | 每个维度一张表：指标、本股、同行中位、差值（按好坏着色）、池内名次、得分条、1–10 得分 |
+| 得分轨 | 五维得分 + 总分，各自带权重（20/15/20/25/20） |
+| 维度块 ×5 | 每个维度一张表：指标、本股、同行中位、差值（按好坏着色）、池内名次、得分条、1–10 得分。市场／风险维度含 12 项：1M/3M/6M/1Y 回报、3M/6M/1Y 相对 SPY 超额、波动率、夏普、索提诺、Beta、最大回撤、52 周回撤 |
 | 计算输入 | 规模与资本 / 利润与现金流 / 每股与调整桥三组原始科目 |
 | 来源 | 财报源、行情源、非 GAAP 源、股本口径、抓取时间 |
 
@@ -399,7 +465,7 @@ open dist/FinanceRanker.app          # macOS；Windows/Linux 用 dist/FinanceRan
 | 平台 | 窗口 | 是否内嵌浏览器 |
 |---|---|---|
 | macOS | pywebview → 系统 WKWebView | 否，产物约 150 MB |
-| Windows | **内嵌 Chromium**（Chrome for Testing 官方便携版），以 `--app=` 打开 | 是，产物约 400 MB |
+| Windows | 默认用系统浏览器；内嵌 Chrome for Testing 备用 | 是，产物约 400 MB |
 
 Windows 之所以不再走 pywebview：它的 WinForms 后端必须经 **pythonnet** 去调 .NET，
 而打包成 exe 之后 pythonnet 加载不了 `Python.Runtime.dll`：
@@ -411,7 +477,7 @@ RuntimeError: Failed to resolve Python.Runtime.Loader.Initialize
 
 这个故障**只在冻结包里出现**——源码运行、CI 的 `--no-window` 冒烟测试都完全正常，
 所以第一版发了出去，用户双击才炸。与其去赌一套 .NET 互操作桥，不如自己带浏览器：
-Windows 版现在不依赖 WebView2，也不依赖用户装过 Edge/Chrome。
+Windows 版默认使用系统浏览器；没有可用的系统浏览器时使用随包提供的 Chrome for Testing。
 
 代价是体积。相比之下，抓取全在 Python 侧（requests / curl_cffi），
 整个 Python 运行时也才 60 MB——多出来的 300 多 MB 全是浏览器引擎。
@@ -425,7 +491,7 @@ Windows 版现在不依赖 WebView2，也不依赖用户装过 Edge/Chrome。
 | `py_mini_racer` 的原生库 | 必须 `collect_dynamic_libs`，否则 akshare 取价全部报 "Native library or dependency not available" |
 | 无控制台看不到日志 | 冻结时写 `launcher.log` 到数据目录 |
 | 端口被占用 | 优先 8848，占用则退到随机空闲端口，窗口指向实际端口 |
-| Windows 的窗口层 | 内嵌 Chromium 用 `--app=` 拉起；找不到或拉起失败则回退系统默认浏览器，**窗口层永远不会弄崩应用** |
+| Windows 的窗口层 | 默认系统浏览器；无法启动时尝试随包 Chrome for Testing；不再因测试版浏览器提示误以为 Chrome 需要升级 |
 
 调试用参数：
 
@@ -433,7 +499,8 @@ Windows 版现在不依赖 WebView2，也不依赖用户装过 Edge/Chrome。
 |---|---|
 | `--no-window` | 只起服务，供无人值守验证（不碰窗口层） |
 | `--selftest` | 校验窗口层真的在包里（Windows 上缺 Chromium 就以退出码 2 失败），构建时用它把关 |
-| `--browser` | 强制用系统默认浏览器打开，跳过内嵌 Chromium |
+| `--browser` | 使用系统默认浏览器（现在也是 Windows 默认行为） |
+| `--bundled-browser` | Windows 上明确要求用随包浏览器打开 |
 
 ## 7.55 Windows 安装包（.exe）
 
@@ -455,14 +522,14 @@ git push -u origin main
 
 | 产物 | 内容 |
 |---|---|
-| `FinanceRanker-setup` | **`FinanceRanker-0.1.0-setup.exe`** ← 双击安装的安装包 |
+| `FinanceRanker-setup` | **`FinanceRanker-0.1.1-setup.exe`** ← 双击安装的安装包 |
 | `FinanceRanker-windows` | 免安装的绿色版目录（整个 `dist/FinanceRanker/`） |
 | `FinanceRanker-macos` | macOS 的 `.app` |
 
 **Artifacts 需要登录才能下载，而且 90 天就过期**，所以安装包另外走 Release 发布：
 
 ```bash
-git tag v0.1.0 && git push origin v0.1.0
+git tag v0.1.1 && git push origin v0.1.1
 ```
 
 打 `v*` tag 后，`release` job 会把该 tag 那次构建出的安装包发布到
@@ -477,12 +544,28 @@ git tag v0.1.0 && git push origin v0.1.0
 
 ### 路线 B：在 Windows 上本地构建
 
+将本仓库的完整源码包解压到一个文件夹，安装 Python 3.12 x64 后，在该文件夹中**双击 `Build-Windows.cmd`**。
+它会使用 `.venv-build` 独立安装依赖，并在结束时保留窗口供查看结果。
+若看到 `Python was not found`，那可能只是 Windows 的 Microsoft Store 执行别名；
+请安装真正的 Python 3.12 x64（安装完成后重新双击脚本）。在 PowerShell 中可运行：
+
+```powershell
+winget install --id Python.Python.3.12 --exact --source winget
+```
+
+若无法使用 winget，请从 Python 官网下载 3.12 的 Windows 64-bit installer。
+也可从项目根目录的 PowerShell 手动运行：
+
 ```powershell
 powershell -ExecutionPolicy Bypass -File windows\build.ps1
 ```
 
-脚本会依次：校验 Python 是 64 位 → 装依赖 → 跑测试 → PyInstaller 打包 →
-冒烟测试 → 若有 Inno Setup 则顺带编译安装包。缺 Inno Setup 时会明确提示：
+脚本会依次：校验 Python 3.12 x64 → 装依赖 → 跑测试 → PyInstaller 打包 →
+冒烟测试 → 若有 Inno Setup 则顺带编译安装包。
+
+可直接运行的文件位于 `dist\FinanceRanker\FinanceRanker.exe`，运行时要保留同目录的 `_internal`；
+若已安装 Inno Setup，则另有 `dist\FinanceRanker-0.1.1-setup.exe`，便于单文件分发安装。
+缺 Inno Setup 时会明确提示，若需要安装包，可先安装：
 
 ```powershell
 winget install -e --id JRSoftware.InnoSetup
@@ -560,13 +643,16 @@ API：`GET /api/providers`（读缓存）、`POST /api/providers/probe`（强制
 1. **XBRL 标签迁移导致取到旧年份**。Alphabet 把 FY2025 营收标成 `Revenues`，而
    早期年份用 `RevenueFromContractWithCustomerExcludingAssessedTax`。
    按“第一个有数据的标签”取值会静默返回 **FY2024**；NVDA 更严重（26.9B vs 215.9B）。
-   → 改为**跨标签按期间取最新**。
+   → 改为**跨标签按期间取最新，并合并旧标签里的历史财年**，供同比与 CAGR 使用。
 2. **资产负债表科目没有 `start`**，用利润表的“年度区间”规则过滤会把
    Assets / Equity 全部过滤掉。→ 拆成 flow / instant 两套抽取规则。
 3. **外币申报主体**。TSM 报 IFRS 且以 **TWD** 申报，却是 USD ADR。
    直接算 `市值(USD)/营收(TWD)`、`价格(USD)/EPS(TWD)` 是错的
    （ADR 还有 1:5 比例）。→ 增加 `ifrs-full` 支持 + **跨币种守卫**：
-   保留原始申报值，剔除所有价格类倍数并明确标注原因。
+   台币财务金额通过公开 TWD/USD 汇率换算、普通股股数除以五、每普通股 EPS
+   乘以五。Yahoo 汇率不可用时再尝试开放的 ExchangeRate-API 日度参考汇率；
+   两者都失效才剔除跨币种估值倍数并明确标注原因。换算仅供同业估值比较，
+   财报利润表历史金额按现汇换算并非公司正式报告的美元数。
 4. **币种探测误判**。早期实现扫描全部标签找非 USD 单位，结果把
    `Year` / `Store` 这类**单位键**当成币种，导致 Apple 被判定为“以 Year 申报”，
    所有估值指标被误清空。→ 只扫描货币类标签。

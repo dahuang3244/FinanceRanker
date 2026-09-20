@@ -41,19 +41,22 @@ jobs:
           PYTHONPATH: .
         run: |
           python tests/test_engine.py
+          python tests/test_adr_fallback.py
+          python tests/test_tsm_metrics.py
+          python tests/test_insights_public.py
           python tests/test_preview.py
           python tests/test_sectors.py
           python tests/test_scale.py
           python tests/test_health.py
+          node tests/test_company_labels.js
+          node tests/test_insights_ui.js
 
       - name: Stage the bundled browser
         shell: pwsh
         run: |
-          # Ship our own Chromium so the app depends on nothing the target
-          # machine may or may not have -- and, just as importantly, so it never
-          # touches pythonnet, whose Python.Runtime.dll cannot be loaded from a
-          # frozen bundle. Chrome for Testing is Google's official portable
-          # build and is addressable through a stable JSON index.
+          # Keep Chromium as a fallback when the system browser cannot open.
+          # Chrome for Testing is Google's portable build and is addressable
+          # through a stable JSON index.
           $ProgressPreference = "SilentlyContinue"
           $meta = Invoke-RestMethod "https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions-with-downloads.json"
           $stable = $meta.channels.Stable

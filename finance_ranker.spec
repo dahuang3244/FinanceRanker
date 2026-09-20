@@ -7,9 +7,7 @@
 #    --add-data or the packaged app serves 404s.
 #  * akshare, pandas and curl_cffi pull in optional/native pieces that
 #    PyInstaller's static analysis misses; the hiddenimports below cover them.
-#  * No browser is bundled. The desktop window uses the OS webview (WKWebView /
-#    WebView2 / WebKitGTK), which keeps the app near the size of the Python
-#    runtime instead of adding a ~150 MB Chromium.
+#  * Windows prefers the system browser and includes fallback Chromium.
 
 import os
 import sys
@@ -98,7 +96,7 @@ block_cipher = None
 # "TypeError: Unsupported type for version info argument: <class 'dict'>",
 # and because the dict was built under `if sys.platform == "win32"` the failure
 # only ever appeared on the Windows runner.
-APP_VERSION = "0.1.0"
+APP_VERSION = "0.1.1"
 
 version_info = None
 if sys.platform == "win32":
@@ -175,6 +173,7 @@ exe = EXE(
     [],
     exclude_binaries=True,
     name="FinanceRanker",
+    icon=(str(ROOT / "app" / "web" / "static" / "FinanceRanker.ico") if sys.platform == "win32" else None),
     version=version_info,
     debug=False,
     bootloader_ignore_signals=False,
@@ -210,7 +209,7 @@ if sys.platform == "darwin":
         icon=None,
         bundle_identifier="io.github.financeranker.app",
         info_plist={
-            "CFBundleShortVersionString": "0.1.0",
+            "CFBundleShortVersionString": "0.1.1",
             "NSHighResolutionCapable": True,
             "LSMinimumSystemVersion": "11.0",
         },

@@ -164,7 +164,7 @@
         <span class="src">${steps.length > 1
           ? t("ov.providers.backup", { list: escapeHtml(steps.slice(1).join(" / ")) })
           : t("ov.providers.nobackup")}<br />${
-          h.providers.yahoo_enabled ? t("ov.providers.yahooOn") : t("ov.providers.yahooOff")}</span>
+          h.providers.yahoo_in_use ? t("ov.providers.yahooOn") : t("ov.providers.yahooOff")}</span>
       </div>`;
     }).join("");
   }

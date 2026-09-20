@@ -36,8 +36,8 @@ if not STATIC_DIR.is_dir():
 
 app = FastAPI(
     title="FinanceRanker",
-    description="Free public-data technology peer ranker (SEC XBRL + akshare + public prices)",
-    version="0.1.0",
+    description="Free public-data technology peer ranker (SEC XBRL + Yahoo annual + akshare)",
+    version="0.1.1",
 )
 
 
@@ -83,20 +83,47 @@ async def _shutdown() -> None:
 async def _resolve_rows(
     job_id: str | None, run_id: str | None
 ) -> tuple[list[MetricRow], dict[str, str]]:
-    """Prefer an explicit run, else the latest job, else the newest snapshot."""
+    """Resolve which rows to show, preferring the newest data available.
+
+    Order of preference:
+      1. an explicitly requested run or job (the caller knows what it wants);
+      2. an in-flight refresh, so a running job's partial rows are visible;
+      3. the newest **stored snapshot** — not this process's last job.
+
+    Step 3 is the important one. The snapshot directory is shared, so a refresh
+    performed by another instance (or by the scheduler) is newer than anything
+    this process remembers. Returning a finished in-memory job here is how a
+    screen ends up showing yesterday's figures next to a newly added metric:
+    the job's rows predate the columns it is being displayed in.
+    """
     if run_id:
         rows = store.load_run(run_id)
         if not rows:
             raise HTTPException(status_code=404, detail=f"run not found: {run_id}")
         return rows, {}
 
-    job = manager.get(job_id) if job_id else manager.current()
-    if job and job.rows:
-        return job.rows, job.errors
+    if job_id:
+        job = manager.get(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail=f"job not found: {job_id}")
+        if job.rows:
+            return job.rows, job.errors
+        raise HTTPException(status_code=409, detail=f"job {job_id} has no rows yet")
+
+    active = manager.running()
+    if active is not None and active.rows:
+        return active.rows, active.errors
 
     latest = store.latest_run_id()
     if latest:
-        return store.load_run(latest), {}
+        rows = store.load_run(latest)
+        if rows:
+            return rows, {}
+
+    # Nothing stored: fall back to this process's most recent finished job.
+    finished = manager.freshest()
+    if finished is not None:
+        return finished.rows, finished.errors
     raise HTTPException(status_code=404, detail="no refresh data yet — run a refresh first")
 
 
@@ -120,7 +147,7 @@ async def health() -> dict:
         "status": "ok",
         "time": datetime.now().isoformat(),
         "providers": {
-            "fundamentals": "SEC XBRL -> akshare",
+            "fundamentals": "SEC XBRL -> Yahoo annual (aligned missing fields) -> akshare",
             "prices": "Sina -> akshare/Eastmoney -> Yahoo",
             "quotes": "Tencent -> Eastmoney -> Yahoo",
             "yahoo_mode": settings.yahoo_mode,
@@ -249,7 +276,70 @@ async def ranking(
     return {
         "count": len(rows),
         "errors": errors,
+        "staleness": _staleness(rows),
+        "metrics_version": _metrics_version(),
         "rows": [r.model_dump(mode="json") for r in rows],
+    }
+
+
+def _metrics_version() -> int:
+    from app.engine.scoring import METRICS_VERSION
+
+    return METRICS_VERSION
+
+
+def _staleness(rows: list[MetricRow]) -> dict:
+    """Whether the rows being shown were produced by the current metric set.
+
+    Without this, a snapshot written by an older build renders as a screen full
+    of blanks that looks exactly like a broken data source. Reporting the
+    mismatch turns a silent nothing into an instruction: refresh.
+    """
+    if not rows:
+        return {"stale": False, "reason": None, "missing_metrics": [],
+                "age_hours": None, "stale_after_hours": settings.stale_after_hours}
+
+    from app.engine.scoring import METRICS, METRICS_VERSION
+
+    versions = {r.metrics_version for r in rows}
+    ages = [
+        (datetime.now() - r.fetched_at).total_seconds() / 3600.0
+        for r in rows
+        if r.fetched_at is not None
+    ]
+    age = round(min(ages), 2) if ages else None
+    base = {"stale_after_hours": settings.stale_after_hours, "age_hours": age,
+            "missing_metrics": []}
+
+    # Which columns no row in this snapshot carries at all.
+    missing = sorted(
+        attr for attr, _, _ in METRICS
+        if all(getattr(r, attr, None) is None for r in rows)
+    )
+    stale_shape = any(v < METRICS_VERSION for v in versions) and bool(missing)
+    if stale_shape:
+        return {**base, "stale": True, "reason": "older_metrics", "missing_metrics": missing}
+
+    if age is not None and age > settings.stale_after_hours:
+        return {**base, "stale": True, "reason": "old_snapshot", "missing_metrics": missing}
+    return {**base, "stale": False, "reason": None, "missing_metrics": missing}
+
+
+@app.get("/api/metrics")
+async def metrics_catalog() -> dict:
+    """Every displayed metric, its component and whether it is scored.
+
+    The company detail view builds its blocks from this instead of a local list,
+    so a metric can never appear in the UI without the backend agreeing on how
+    (or whether) it is scored. That drift is what produced rows with a blank
+    score column and no explanation.
+    """
+    from app.engine.scoring import METRICS, METRICS_VERSION, metric_catalog
+
+    return {
+        "metrics_version": METRICS_VERSION,
+        "scored_count": len(METRICS),
+        "metrics": metric_catalog(),
     }
 
 
@@ -260,6 +350,40 @@ async def ticker_detail(ticker: str) -> dict:
     if not match:
         raise HTTPException(status_code=404, detail=f"{ticker} not in the current screen")
     return match.model_dump(mode="json")
+
+
+@app.get("/api/insights/{ticker}")
+async def company_insights(ticker: str, job_id: str | None = None, run_id: str | None = None) -> dict:
+    from app.pipeline import validate_ticker
+    from app.health import yahoo_usable
+    from app.providers.prices import get_price_history
+    from app.providers.news import get_news
+    from app.providers.earnings import get_earnings_event
+    from app.insights import build_insights
+
+    try:
+        symbol = validate_ticker(ticker)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    rows, _ = await _resolve_rows(job_id, run_id)
+    row = next((r for r in rows if r.ticker == symbol), None)
+    if row is None:
+        raise HTTPException(status_code=404, detail="ticker not in this snapshot")
+    try:
+        history = await asyncio.to_thread(get_price_history, symbol, allow_yahoo=yahoo_usable())
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"daily prices unavailable: {exc}") from exc
+    try:
+        news = await asyncio.wait_for(asyncio.to_thread(get_news, symbol, row.company), timeout=8)
+    except Exception:
+        news = None
+    earnings = None
+    if yahoo_usable():
+        try:
+            earnings = await asyncio.wait_for(asyncio.to_thread(get_earnings_event, symbol), timeout=7)
+        except Exception:
+            pass
+    return build_insights(row, history, news, earnings)
 
 
 # --------------------------------------------------------------------------- #

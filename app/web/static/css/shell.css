@@ -160,14 +160,9 @@ body {
 .brand .mark {
   flex: none;
   width: 36px; height: 36px;
-  display: grid; place-items: center;
+  display: block;
   border-radius: 11px;
-  background: linear-gradient(150deg, var(--accent), var(--accent-deep));
-  color: #fff8f2;
-  font-family: var(--mono);
-  font-size: 13px;
-  font-weight: 600;
-  letter-spacing: 0.06em;
+  object-fit: cover;
   box-shadow: 0 6px 16px -6px rgba(156, 72, 44, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.35);
 }
 .brand .txt { min-width: 0; }
@@ -1142,12 +1137,8 @@ table.data .rowlink { cursor: pointer; }
   .mobilebar .mark {
     width: 30px; height: 30px;
     border-radius: 9px;
-    display: grid; place-items: center;
-    background: linear-gradient(150deg, var(--accent), var(--accent-deep));
-    color: #fff8f2;
-    font-family: var(--mono);
-    font-size: 11px;
-    font-weight: 600;
+    display: block;
+    object-fit: cover;
   }
   .mobilebar b { font-size: 13.5px; font-weight: 600; letter-spacing: -0.01em; }
   .mobilebar .spacer { flex: 1; }

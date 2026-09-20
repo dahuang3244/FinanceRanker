@@ -253,12 +253,82 @@
 @keyframes pop-in { from { opacity: 0; transform: translate3d(0, -6px, 0) scale(0.985); } }
 .colpanel[open] > summary { border-color: var(--accent-line); background: var(--accent-soft); color: var(--accent-deep); }
 
-/* the ranking table carries fixed column widths so the layout never reflows */
-table.data.ranking { table-layout: fixed; width: 100%; min-width: 940px; }
-table.data.ranking td, table.data.ranking th { padding: 10px 12px; }
+/* The ranking table can carry 29 comparable metrics. Sizing it by content
+   (rather than a fixed layout plus hand-guessed pixel widths) is what stops
+   headers from being clipped into "3M RETURN VS SP" and "CASH QUALIT", while
+   `min-width: 100%` keeps a short 8-column view from floating in dead space. */
+table.data.ranking { table-layout: auto; width: 100%; }
+table.data.ranking td, table.data.ranking th { padding: 9px 10px; }
 table.data.ranking td.company, table.data.ranking th.company { max-width: none; }
 
+/* Header labels stay on one line and are never clipped mid-word. */
+table.data.ranking thead th {
+  text-transform: none;
+  letter-spacing: 0.02em;
+  font-size: 11.5px;
+  line-height: 1.25;
+  white-space: nowrap;
+}
+
+/* Freeze identity columns: with 29 comparable metrics the reader scrolls
+   sideways, and losing the ticker makes every subsequent number unreadable. */
+table.data.ranking th.col-sticky, table.data.ranking td.col-sticky {
+  position: sticky;
+  z-index: 1;
+  background: var(--surface);
+}
+table.data.ranking colgroup col.col-sticky { position: sticky; }
+table.data.ranking thead th.col-sticky { z-index: 3; }
+table.data.ranking th.col-freeze-1, table.data.ranking td.col-freeze-1 { left: 0; }
+table.data.ranking th.col-freeze-2, table.data.ranking td.col-freeze-2 { left: 46px; }
+table.data.ranking td.col-sticky { background: linear-gradient(90deg, var(--surface) 92%, rgba(0,0,0,0.02)); }
+table.data.ranking td.col-freeze-2 { box-shadow: 6px 0 10px -8px rgba(60, 44, 30, 0.5); }
+
+/* Group separators. A tint per column reads as stripes and fights the sticky
+   column backgrounds, so the boundary between fundamental / return / risk /
+   consensus blocks is marked with a single vertical rule instead. */
+table.data.ranking th.grp-start, table.data.ranking td.grp-start {
+  border-left: 1px solid var(--hair-2);
+}
+table.data.ranking thead th.grp-start::before {
+  content: attr(data-group);
+  display: block;
+  font-size: 9px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--accent-deep);
+  opacity: 0.72;
+  margin-bottom: 3px;
+}
+table.data.ranking thead th.grp-start { padding-top: 6px; }
+
 .dimcell { min-width: 88px; }
+
+/* Stale-snapshot notice. A screen of blanks caused by an old snapshot looks
+   exactly like a dead data source, so this is deliberately prominent: a warm
+   rule down the side, the reason in one sentence, and the fix as a button. */
+.stale-card {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 16px;
+  margin: 0 0 14px;
+  padding: 12px 16px;
+  border-radius: var(--r-lg);
+  border: 1px solid rgba(160, 117, 44, 0.36);
+  border-left: 3px solid var(--mid);
+  background: linear-gradient(180deg, rgba(255, 249, 237, 0.96), rgba(252, 244, 228, 0.92));
+  box-shadow: var(--sh);
+}
+.stale-card b { color: var(--mid); font-size: 13px; }
+.stale-card p {
+  flex: 1 1 340px;
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--ink-2);
+}
+.stale-card .btn { flex: none; }
 
 .profile-pill {
   display: inline-flex;

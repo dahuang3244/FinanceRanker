@@ -1,12 +1,16 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="FinanceRanker">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="FinanceRanker">
   <defs>
-    <linearGradient id="g" x1="12" y1="8" x2="52" y2="58" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#bd5c3c" />
-      <stop offset="1" stop-color="#9c482c" />
+    <linearGradient id="base" x1="20" y1="20" x2="224" y2="240" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#493326"/><stop offset="1" stop-color="#251e1a"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="61" y1="183" x2="202" y2="52" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#cb8851"/><stop offset="1" stop-color="#f3d295"/>
     </linearGradient>
   </defs>
-  <rect width="64" height="64" rx="15" fill="url(#g)" />
-  <path d="M14 44l9-10 8 6 12-16" fill="none" stroke="#fff6ef" stroke-width="4.2"
-        stroke-linecap="round" stroke-linejoin="round" />
-  <circle cx="43" cy="24" r="3.6" fill="#fff6ef" />
+  <rect x="4" y="4" width="248" height="248" rx="62" fill="url(#base)"/>
+  <rect x="9" y="9" width="238" height="238" rx="57" fill="none" stroke="#a57952" stroke-opacity=".65" stroke-width="2"/>
+  <path d="M54 184v-31h25v31zm39 0v-51h25v51zm39 0v-76h25v76zm39 0V76h25v108z" fill="#f2dfc2" opacity=".82"/>
+  <path d="M57 148 95 130l36 8 52-59" fill="none" stroke="url(#accent)" stroke-width="15" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="m161 78 27-7-5 28" fill="none" stroke="#f3d295" stroke-width="12" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="57" cy="148" r="7" fill="#f3d295"/>
 </svg>

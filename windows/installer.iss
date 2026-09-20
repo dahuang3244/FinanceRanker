@@ -10,7 +10,7 @@
 ; .github/workflows/build.yml does exactly that on a windows-latest runner.
 
 #define MyAppName "FinanceRanker"
-#define MyAppVersion "0.1.0"
+#define MyAppVersion "0.1.1"
 #define MyAppPublisher "FinanceRanker"
 #define MyAppExeName "FinanceRanker.exe"
 ; Relative to this .iss file, so the script works from any checkout location.
@@ -28,7 +28,7 @@ DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
 AllowNoIcons=yes
-; The bundle is architecture-bound (x64) and the webview needs a modern OS.
+; The bundle is architecture-bound (x64) and needs a modern OS.
 MinVersion=10.0.17763
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
@@ -40,6 +40,7 @@ WizardStyle=modern
 PrivilegesRequired=lowest
 PrivilegesRequiredOverridesAllowed=dialog
 UninstallDisplayIcon={app}\{#MyAppExeName}
+SetupIconFile=..\app\web\static\FinanceRanker.ico
 
 [Languages]
 ; Chinese first: this is a Chinese-language tool.

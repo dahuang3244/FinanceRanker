@@ -19,6 +19,7 @@ from app.models import MetricRow, PriceHistory
 from app.providers import fundamentals as fund_provider
 from app.providers import prices as price_provider
 from app.providers import quotes as quote_provider
+from app.providers.prices import PriceBasis
 
 log = logging.getLogger(__name__)
 
@@ -44,20 +45,37 @@ def validate_ticker(ticker: str) -> str:
     return symbol
 
 
-def get_benchmark() -> PriceHistory | None:
+def get_benchmark(basis: PriceBasis | None = None) -> PriceHistory | None:
     """SPY is optional: without it beta is simply left blank."""
     try:
-        return price_provider.get_price_history(BENCHMARK, allow_yahoo=yahoo_usable())
+        return price_provider.get_price_history(
+            BENCHMARK, allow_yahoo=yahoo_usable(), basis=basis
+        )
     except Exception as exc:
         log.warning("benchmark %s unavailable, beta will be blank: %s", BENCHMARK, exc)
         return None
 
 
-def fetch_one(ticker: str, benchmark: PriceHistory | None = None) -> tuple[MetricRow | None, str | None]:
+def get_price_basis() -> PriceBasis:
+    """Pick the price basis for this run (adjusted when Yahoo can supply SPY)."""
+    try:
+        return price_provider.resolve_basis(BENCHMARK, allow_yahoo=yahoo_usable())
+    except Exception as exc:  # never let basis discovery break a refresh
+        log.debug("price basis probe failed: %s", exc)
+        return PriceBasis(adjusted=False, source="Sina")
+
+
+def fetch_one(
+    ticker: str,
+    benchmark: PriceHistory | None = None,
+    basis: PriceBasis | None = None,
+) -> tuple[MetricRow | None, str | None]:
     """Fetch and compute a single ticker. Returns (row, error)."""
     started = time.perf_counter()
     try:
-        history = price_provider.get_price_history(ticker, allow_yahoo=yahoo_usable())
+        history = price_provider.get_price_history(
+            ticker, allow_yahoo=yahoo_usable(), basis=basis
+        )
     except Exception as exc:
         return None, f"price history unavailable: {exc}"
 
@@ -77,13 +95,38 @@ def fetch_one(ticker: str, benchmark: PriceHistory | None = None) -> tuple[Metri
         )
 
     try:
-        fund = fund_provider.get_fundamentals(ticker)
+        fund = fund_provider.get_fundamentals(ticker, allow_yahoo=yahoo_usable())
     except Exception as exc:
         return None, f"fundamentals unavailable: {exc}"
 
+    # Analyst consensus is enrichment: it fills the target-price and upside
+    # columns when Yahoo is reachable and is simply absent otherwise.
+    analyst = None
+    try:
+        from app.providers.yahoo_analyst import get_analyst_view
+
+        analyst = get_analyst_view(ticker, allow_yahoo=yahoo_usable())
+    except Exception as exc:
+        log.debug("analyst consensus unavailable for %s: %s", ticker, exc)
+
+    if ticker == "TSM" and fund.currency == "TWD" and quote.currency == "USD":
+        from app.providers.adr import normalize_tsm, normalize_tsm_shares
+        from app.providers.fx import usd_per_twd
+
+        fx = usd_per_twd(allow_yahoo=yahoo_usable())
+        if fx is not None:
+            try:
+                fund = normalize_tsm(fund, quote, *fx)
+            except ValueError as exc:
+                log.warning("TSM ADR normalization unavailable: %s", exc)
+                fund = normalize_tsm_shares(fund, quote)
+        else:
+            fund = normalize_tsm_shares(fund, quote)
+
     try:
         row = metrics.compute_row(
-            ticker, history=history, quote=quote, fund=fund, benchmark=benchmark
+            ticker, history=history, quote=quote, fund=fund, benchmark=benchmark,
+            analyst=analyst,
         )
     except Exception as exc:
         log.exception("metric computation failed for %s", ticker)
@@ -99,6 +142,7 @@ def build_rows(
     progress: ProgressFn | None = None,
     benchmark: PriceHistory | None = None,
     max_workers: int | None = None,
+    basis: PriceBasis | None = None,
 ) -> tuple[list[MetricRow], dict[str, str]]:
     """Fetch, compute and score a peer set."""
     progress = progress or _noop
@@ -116,9 +160,13 @@ def build_rows(
     if total == 0:
         return [], {}
 
+    # Resolve the price basis before any ticker is fetched so the stock and the
+    # benchmark are always measured on the same convention.
+    if basis is None:
+        basis = get_price_basis()
     if benchmark is None:
         progress("__benchmark__", "fetching SPY benchmark", 0, total)
-        benchmark = get_benchmark()
+        benchmark = get_benchmark(basis)
 
     rows: list[MetricRow] = []
     errors: dict[str, str] = {}
@@ -126,7 +174,7 @@ def build_rows(
     workers = max_workers or max(1, min(settings.max_concurrency, total))
 
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        futures = {pool.submit(fetch_one, s, benchmark): s for s in symbols}
+        futures = {pool.submit(fetch_one, s, benchmark, basis): s for s in symbols}
         for future in as_completed(futures):
             symbol = futures[future]
             done += 1

@@ -106,12 +106,21 @@ class Settings(BaseSettings):
     # ---------- default universe (mirrors the workbook's Peer Data row 5) ----------
     default_tickers: str = "MSFT,AAPL,GOOGL,AMZN,META,NVDA,TSM,AMD,QCOM,AVGO,AMAT,MU,ORCL"
 
-    # ---------- scoring weights (mirrors Scoring!AR39:AV39) ----------
-    w_growth: float = 0.25
-    w_profitability: float = 0.25
+    # ---------- market risk ----------
+    # Annual risk-free rate used by the Sharpe/Sortino ratios. It must be the
+    # same for every peer, otherwise the ratios stop being comparable.
+    risk_free_rate: float = 0.04
+
+    # A snapshot older than this is flagged in the UI so a stale screen is
+    # never mistaken for a data-source failure.
+    stale_after_hours: float = 36
+
+    # ---------- scoring weights; defaults emphasize entry valuation and trend ----------
+    w_growth: float = 0.20
+    w_profitability: float = 0.15
     w_cash: float = 0.20
-    w_valuation: float = 0.20
-    w_market: float = 0.10
+    w_valuation: float = 0.25
+    w_market: float = 0.20
 
     @property
     def ticker_list(self) -> list[str]:

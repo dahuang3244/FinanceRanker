@@ -12,6 +12,7 @@
     $("#pingBtn").addEventListener("click", async (e) => {
       e.currentTarget.disabled = true;
       await FRCompany.mount({ force: true });
+      await FRInsights.load();
       e.currentTarget.disabled = false;
     });
     // keep the breadcrumb link carrying the snapshot context
@@ -20,8 +21,10 @@
       $("#toRanking").innerHTML = `${icon("table")}<span>${t("action.back.ranking")}</span>`;
       $("#pingBtn").innerHTML = `${icon("refresh")}<span>${t("action.reload")}</span>`;
       FRCompany.relabel();
+      FRInsights.render();
     });
 
     await FRCompany.mount({ force: true });
+    await FRInsights.load();
   };
 })();

@@ -221,18 +221,33 @@ def test_percentile_scoring_bounds_and_direction():
 
 def test_score_peers_assigns_ranks_and_eligibility():
     rows = []
-    for i, name in enumerate(["AAA", "BBB", "CCC"]):
+    # CCC is uniformly ahead of BBB, which is ahead of AAA, so CCC must rank
+    # first and every row must be eligible.
+    for base, name in ((1.0, "AAA"), (2.0, "BBB"), (3.0, "CCC")):
         row = MetricRow(ticker=name)
-        # Populate every scoring metric so all rows are eligible.
         for attr, _, _ in scoring.METRICS:
-            setattr(row, attr, float(i + 1))
+            setattr(row, attr, base)
         rows.append(row)
     scored = scoring.score_peers(rows)
     eligible = [r for r in scored if r.rank_eligible]
     assert len(eligible) == 3
     assert [r.ticker for r in scored if r.rank == 1] == ["CCC"]  # highest values win
-    assert all(r.data_coverage == 21 for r in scored)
+    assert all(r.data_coverage == len(scoring.METRICS) for r in scored)
+    assert all(r.coverage_pct == 1.0 for r in scored)
     assert all(r.profile for r in scored)
+
+
+def test_constant_metric_carries_no_information_and_is_not_scored():
+    """Every peer identical on a metric must not earn (or lose) points for it."""
+    rows = [MetricRow(ticker=n) for n in ("AAA", "BBB")]
+    for row in rows:
+        for attr, _, _ in scoring.METRICS:
+            setattr(row, attr, 5.0)
+    scored = scoring.score_peers(rows)
+    for row in scored:
+        assert row.z_growth_yoy is None
+        assert row.score_overall is None
+        assert row.rank_eligible is False
 
 
 def test_score_peers_marks_sparse_rows_ineligible():

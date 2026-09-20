@@ -39,6 +39,9 @@ FLOW_TAGS: dict[str, list[str]] = {
         "CostOfGoodsAndServicesSold",
         "CostOfGoodsAndServicesSoldIncludingDepreciationDepletionAndAmortization",
         "CostOfGoodsSold",
+        # Oracle and other license/support filers use these instead.
+        "CostOfServices",
+        "CostOfGoodsAndServiceExcludingDepreciationDepletionAndAmortization",
     ],
     "operating_income": ["OperatingIncomeLoss"],
     "net_income": ["NetIncomeLoss", "ProfitLoss"],
@@ -75,8 +78,21 @@ INSTANT_TAGS: dict[str, list[str]] = {
         "CashAndCashEquivalentsAtCarryingValue",
         "CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents",
     ],
-    "debt_current": ["ShortTermBorrowings", "LongTermDebtCurrent"],
-    "debt_long": ["LongTermDebtNoncurrent", "LongTermDebt"],
+    "debt_current": [
+        "ShortTermBorrowings",
+        "LongTermDebtCurrent",
+        "LongTermDebtAndCapitalLeaseObligationsCurrent",
+        "CommercialPaper",
+        "NotesPayableCurrent",
+        "DebtCurrent",
+    ],
+    "debt_long": [
+        "LongTermDebtNoncurrent",
+        "LongTermDebtAndCapitalLeaseObligations",
+        "LongTermNotesPayable",
+        "LongTermDebt",
+        "ConvertibleDebtNoncurrent",
+    ],
 }
 
 UNITS: dict[str, list[str]] = {
@@ -96,6 +112,7 @@ IFRS_FLOW_TAGS: dict[str, list[str]] = {
         "RevenueAndOperatingIncome",
     ],
     "gross_profit": ["GrossProfit"],
+    "cost_of_revenue": ["CostOfSales", "CostOfRevenue"],
     "operating_income": [
         "ProfitLossFromOperatingActivities",
         "ProfitLossFromContinuingOperations",
@@ -109,6 +126,7 @@ IFRS_FLOW_TAGS: dict[str, list[str]] = {
         "PurchaseOfPropertyPlantAndEquipment",
         "PurchaseOfPropertyPlantAndEquipmentIntangibleAssetsOtherThanGoodwill",
         "AcquisitionOfPropertyPlantAndEquipment",
+        "PaymentsToAcquirePropertyPlantAndEquipment",
     ],
     "depreciation_amortization": [
         "DepreciationAndAmortisationExpense",
@@ -124,11 +142,8 @@ IFRS_FLOW_TAGS: dict[str, list[str]] = {
 }
 
 IFRS_INSTANT_TAGS: dict[str, list[str]] = {
-    "equity": [
-        "EquityAttributableToOwnersOfParent",
-        "Equity",
-        "EquityAndLiabilities",
-    ],
+    # EquityAndLiabilities is the TOTAL balance sheet, never shareholders' equity.
+    "equity": ["EquityAttributableToOwnersOfParent", "Equity"],
     "assets": ["Assets"],
     "cash": ["CashAndCashEquivalents", "CashAndCashEquivalentsAndShortTermInvestments"],
     "debt_current": [
@@ -139,7 +154,7 @@ IFRS_INSTANT_TAGS: dict[str, list[str]] = {
     "debt_long": ["LongtermBorrowings", "NoncurrentPortionOfLongtermBorrowings"],
 }
 
-IFRS_EPS_TAGS = ["BasicEarningsLossPerShare", "DilutedEarningsLossPerShare"]
+IFRS_EPS_TAGS = ["DilutedEarningsLossPerShare", "BasicEarningsLossPerShare"]
 IFRS_SHARES_TAGS = ["WeightedAverageNumberOfOrdinarySharesOutstandingDiluted"]
 
 
@@ -204,6 +219,7 @@ def _flow_series(gaap: dict, tags: list[str], unit: str = "USD") -> FactSeries |
     candidate tag is scanned and the series containing the newest period wins.
     """
     candidates: list[tuple[str, str, list[tuple[date, float]]]] = []
+    by_period: dict[date, tuple[str, float]] = {}
     for tag in tags:
         node = gaap.get(tag)
         if not node:
@@ -225,17 +241,22 @@ def _flow_series(gaap: dict, tags: list[str], unit: str = "USD") -> FactSeries |
                     rows.append(p)
             if not rows:
                 continue
-            series = [
-                (date.fromisoformat(p["end"]), float(p["val"]))
-                for p in _dedupe_latest_filing(rows)
-            ]
+            series = [(date.fromisoformat(p["end"]), float(p["val"]))
+                      for p in _dedupe_latest_filing(rows)]
             if series:
                 candidates.append((tag, u, series))
 
     if not candidates:
         return None
-    tag, u, series = max(candidates, key=lambda c: c[2][0][0])
-    return FactSeries(tag=tag, unit=u, points=series)
+    # The newest tag often has only one year (e.g. a migrated revenue tag).
+    # Merge equivalent tags by fiscal end, preferring the caller's tag order
+    # for overlapping dates instead of discarding all older observations.
+    for tag, u, series in candidates:
+        for end, value in series:
+            by_period.setdefault(end, (tag, value))
+    newest_tag = by_period[max(by_period)][0]
+    return FactSeries(tag=newest_tag, unit=candidates[0][1],
+                      points=sorted(((d, v) for d, (_, v) in by_period.items()), reverse=True))
 
 
 def _instant_series(gaap: dict, tags: list[str], unit: str = "USD") -> FactSeries | None:
@@ -268,8 +289,13 @@ def _instant_series(gaap: dict, tags: list[str], unit: str = "USD") -> FactSerie
 
     if not candidates:
         return None
-    tag, u, series = max(candidates, key=lambda c: c[2][0][0])
-    return FactSeries(tag=tag, unit=u, points=series)
+    by_period: dict[date, tuple[str, float]] = {}
+    for tag, u, series in candidates:
+        for end, value in series:
+            by_period.setdefault(end, (tag, value))
+    newest_tag = by_period[max(by_period)][0]
+    return FactSeries(tag=newest_tag, unit=candidates[0][1],
+                      points=sorted(((d, v) for d, (_, v) in by_period.items()), reverse=True))
 
 
 def _latest_dei_shares(facts: dict) -> float | None:
@@ -360,13 +386,18 @@ def get_sec_fundamentals(ticker: str) -> Fundamentals | None:
         cik=cik,
     )
     for field, tags in flow_tags.items():
-        setattr(fund, field, _flow_series(node_source, tags))
+        setattr(fund, field, _flow_series(node_source, tags, unit=currency))
     for field, tags in instant_tags.items():
-        setattr(fund, field, _instant_series(node_source, tags))
+        setattr(fund, field, _instant_series(node_source, tags, unit=currency))
 
-    fund.eps_diluted = _flow_series(node_source, eps_tags, unit=None)
+    # EPS is per ordinary share for TSM, not per US-listed depositary share.
+    eps_unit = f"{currency}/shares" if taxonomy == "ifrs-full" else "USD/shares"
+    fund.eps_diluted = _flow_series(node_source, eps_tags, unit=eps_unit)
+    if fund.eps_diluted is None:
+        fund.eps_diluted = _flow_series(node_source, eps_tags, unit=None)
     fund.shares_diluted = _flow_series(node_source, shares_tags, unit="shares")
-    fund.shares_outstanding = _latest_dei_shares(facts)
+    # DEI tags live under companyfacts["facts"]["dei"], alongside us-gaap.
+    fund.shares_outstanding = _latest_dei_shares(all_facts)
     if fund.shares_outstanding:
         fund.shares_basis = "Latest common shares (SEC DEI)"
 
@@ -480,19 +511,50 @@ def get_akshare_fundamentals(ticker: str) -> Fundamentals | None:
 
 
 # --------------------------------------------------------------------------- #
-def get_fundamentals(ticker: str) -> Fundamentals:
-    """Resolve annual fundamentals, SEC first then akshare."""
+def get_fundamentals(ticker: str, *, allow_yahoo: bool = False) -> Fundamentals:
+    """Resolve SEC facts; add aligned Yahoo gaps when reachable; then alternatives."""
     ticker = ticker.upper().strip()
     errors: list[str] = []
+    sec = None
 
     try:
         sec = get_sec_fundamentals(ticker)
         if sec and sec.is_usable:
+            if ticker == "TSM":
+                from app.providers.tsm_official import fill_tsm_cash_flow
+                sec = fill_tsm_cash_flow(sec)
+            if allow_yahoo and sec.currency in ("USD", "TWD"):
+                from app.providers.yahoo_fundamentals import fill_missing, get_yahoo_fundamentals
+
+                # Yahoo's financial currency for foreign ADRs can differ from
+                # the listing currency. Only merge verified USD filing data.
+                try:
+                    yahoo_symbol = "2330.TW" if ticker == "TSM" and sec.currency == "TWD" else ticker
+                    yahoo = get_yahoo_fundamentals(yahoo_symbol, currency=sec.currency)
+                    if yahoo:
+                        if yahoo_symbol != ticker:
+                            yahoo.ticker = ticker
+                        sec = fill_missing(sec, yahoo)
+                except Exception as exc:
+                    log.info("Yahoo gap fill unavailable for %s: %s", ticker, exc)
             return sec
         errors.append("SEC: incomplete")
     except Exception as exc:
         errors.append(f"SEC: {exc}")
         log.info("SEC fundamentals failed for %s: %s", ticker, exc)
+
+    if allow_yahoo and (ticker != "TSM" or sec is None or sec.currency == "TWD"):
+        from app.providers.yahoo_fundamentals import get_yahoo_fundamentals
+
+        try:
+            yahoo_symbol = "2330.TW" if ticker == "TSM" else ticker
+            yahoo = get_yahoo_fundamentals(yahoo_symbol, currency="TWD" if ticker == "TSM" else "USD")
+            if yahoo and yahoo.is_usable:
+                yahoo.ticker = ticker
+                return yahoo
+            errors.append("Yahoo: incomplete")
+        except Exception as exc:
+            errors.append(f"Yahoo: {exc}")
 
     if settings.enable_akshare:
         try:

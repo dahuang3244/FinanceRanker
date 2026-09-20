@@ -165,7 +165,7 @@ def results(*, force: bool = False) -> dict:
             except Exception as exc:  # pragma: no cover - defensive
                 ok, detail = False, f"{type(exc).__name__}: {exc}"[:120]
             out[key] = {"key": key, "label": label, "ok": ok, "detail": detail}
-            if key == "yahoo" and not settings.enable_yahoo:
+            if key == "yahoo" and not settings.enable_yahoo and settings.yahoo_mode == "off":
                 # Probed for information only; it is not part of the chain.
                 out[key]["disabled"] = True
 

@@ -9,6 +9,10 @@
 
   const PREF_KEY = "fr.ranking.prefs";
 
+  // Size of the scoring universe, used to label the coverage meter honestly.
+  // Kept in step with `app/engine/scoring.py::METRICS`.
+  const METRIC_COUNT = 29;
+
   const VIEWS = [
     { key: "overall", i18n: "rk.view.overall", col: "score_overall" },
     { key: "growth", i18n: "rk.view.growth", col: "score_growth" },
@@ -18,87 +22,174 @@
     { key: "market", i18n: "rk.view.market", col: "score_market" },
   ];
 
-  const numCell = (v, d = 2, cls = "") =>
-    `<td class="right${cls ? " " + cls : ""}"><span class="mono">${num(v, d)}</span></td>`;
+  // A renderer returns the cell *contents*; `decorateCell` wraps it so the
+  // class list (alignment, frozen identity, group boundary) is applied in one
+  // place and can never drift between <th> and <td>.
+  const numCell = (v, d = 2) => `<span class="mono">${num(v, d)}</span>`;
   const pctCell = (v, d = 1) =>
-    `<td class="right"><span class="mono${v > 0 ? "" : ""}" style="color:${v === null || v === undefined ? "var(--faint)" : v >= 0 ? "var(--good)" : "var(--low)"}">${signedPct(v, d)}</span></td>`;
+    `<span class="mono" style="color:${v === null || v === undefined ? "var(--faint)" : v >= 0 ? "var(--good)" : "var(--low)"}">${signedPct(v, d)}</span>`;
+  const multCell = (v) => `<span class="mono">${mult(v)}</span>`;
 
   // keys whose data is numeric → header + cells align right
   const RIGHT = new Set([
     "rank", "score_growth", "score_profitability", "score_cash", "score_valuation", "score_market",
-    "score_overall", "price", "market_cap", "return_1y", "revenue_growth_yoy", "revenue_cagr_5y",
-    "gross_margin", "operating_margin", "net_margin", "roe", "roic", "fcf_yield", "forward_pe",
-    "price_to_sales", "ev_to_ebitda", "price_to_book", "price_to_fcf", "beta", "drawdown_52w",
+    "score_overall", "price", "market_cap", "return_1m", "return_3m", "return_6m", "return_1y",
+    "return_ytd", "return_3y", "excess_return_3m", "excess_return_6m", "excess_return_1y",
+    "benchmark_return_3m", "benchmark_return_6m", "benchmark_return_1y", "revenue_growth_yoy",
+    "revenue_cagr_5y", "gross_margin", "operating_margin", "net_margin", "roe", "roic", "fcf_yield",
+    "forward_pe", "price_to_sales", "ev_to_ebitda", "price_to_book", "price_to_fcf", "beta",
+    "beta_1y", "volatility", "downside_deviation", "sharpe_ratio", "sortino_ratio",
+    "max_drawdown_1y", "drawdown_52w", "analyst_target", "analyst_upside", "coverage_pct",
     "data_coverage",
   ]);
 
   const COLS = [
     {
-      key: "rank", label: () => "#", sortable: true, width: "48px",
+      key: "rank", label: () => t("common.rank"), sortable: true, width: "48px",
+      freeze: 1,
       value: (r) => (r.rank === null || r.rank === undefined ? Number.POSITIVE_INFINITY : r.rank),
-      render: (r) => `<td class="rank-cell num${r.rank && r.rank <= 3 ? " top" : ""}">${r.rank ?? DASH}</td>`,
+      cell: "rank-cell num",
+      cellExtra: (r) => (r.rank && r.rank <= 3 ? "top" : ""),
+      render: (r) => `${r.rank ?? DASH}`,
     },
     {
       key: "ticker", label: () => t("common.ticker"), sortable: true,
-      width: "82px", value: (r) => r.ticker,
-      render: (r) => `<td class="ticker"><a class="tick-link" href="${detailHref(r.ticker)}">${escapeHtml(r.ticker)}</a></td>`,
+      width: "82px", freeze: 2, value: (r) => r.ticker, cell: "ticker",
+      render: (r) => `<a class="tick-link" href="${detailHref(r.ticker)}">${escapeHtml(r.ticker)}</a>`,
     },
     {
       key: "company", label: () => t("common.company"), sortable: true,
-      width: "190px", value: (r) => (r.company || "").toLowerCase(),
-      render: (r) => `<td class="company" title="${escapeHtml(r.company || "")}">${escapeHtml(r.company || DASH)}</td>`,
+      width: "190px", value: (r) => (r.company || "").toLowerCase(), cell: "company",
+      render: (r) => `<span title="${escapeHtml(r.company || "")}">${escapeHtml(r.company || DASH)}</span>`,
     },
     {
       key: "detail", label: () => t("action.expand"), sortable: false, width: "82px",
       value: () => "",
-      render: (r) => `<td><a class="detail-link" href="${detailHref(r.ticker)}"
+      render: (r) => `<a class="detail-link" href="${detailHref(r.ticker)}"
         title="${escapeHtml(t("action.detail"))} · ${escapeHtml(r.ticker)}">${
-        t("action.expand")}<span class="chev">${icon("chevron")}</span></a></td>`,
+        t("action.expand")}<span class="chev">${icon("chevron")}</span></a>`,
     },
-    { key: "score_growth", label: () => t("dim.growth"), sortable: true, width: "92px", value: (r) => r.score_growth, render: (r) => `<td class="right dimcell">${FR.meter(r.score_growth)}</td>` },
-    { key: "score_profitability", label: () => t("dim.profitability"), sortable: true, width: "92px", value: (r) => r.score_profitability, render: (r) => `<td class="right dimcell">${FR.meter(r.score_profitability)}</td>` },
-    { key: "score_cash", label: () => t("dim.cash"), sortable: true, width: "92px", value: (r) => r.score_cash, render: (r) => `<td class="right dimcell">${FR.meter(r.score_cash)}</td>` },
-    { key: "score_valuation", label: () => t("dim.valuation"), sortable: true, width: "92px", value: (r) => r.score_valuation, render: (r) => `<td class="right dimcell">${FR.meter(r.score_valuation)}</td>` },
-    { key: "score_market", label: () => t("dim.market"), sortable: true, width: "92px", value: (r) => r.score_market, render: (r) => `<td class="right dimcell">${FR.meter(r.score_market)}</td>` },
-    { key: "score_overall", label: () => t("common.overall"), sortable: true, width: "104px", value: (r) => r.score_overall, render: (r) => `<td class="right dimcell">${FR.meter(r.score_overall)}</td>` },
-    { key: "profile", label: () => t("common.profile"), sortable: false, width: "84px", value: (r) => r.profile, render: (r) => `<td>${FR.profilePill(r.profile)}</td>` },
+    { key: "score_growth", label: () => t("dim.growth"), sortable: true, width: "92px", cell: "dimcell", value: (r) => r.score_growth, render: (r) => FR.meter(r.score_growth) },
+    { key: "score_profitability", label: () => t("dim.profitability"), sortable: true, width: "92px", cell: "dimcell", value: (r) => r.score_profitability, render: (r) => FR.meter(r.score_profitability) },
+    { key: "score_cash", label: () => t("dim.cash"), sortable: true, width: "92px", cell: "dimcell", value: (r) => r.score_cash, render: (r) => FR.meter(r.score_cash) },
+    { key: "score_valuation", label: () => t("dim.valuation"), sortable: true, width: "92px", cell: "dimcell", value: (r) => r.score_valuation, render: (r) => FR.meter(r.score_valuation) },
+    { key: "score_market", label: () => t("dim.market"), sortable: true, width: "92px", cell: "dimcell", value: (r) => r.score_market, render: (r) => FR.meter(r.score_market) },
+    { key: "score_overall", label: () => t("common.overall"), sortable: true, width: "104px", cell: "dimcell", value: (r) => r.score_overall, render: (r) => FR.meter(r.score_overall) },
+    { key: "profile", label: () => t("common.profile"), sortable: false, width: "84px", value: (r) => r.profile, render: (r) => FR.profilePill(r.profile) },
     { key: "price", label: () => t("col.price"), sortable: true, width: "84px", value: (r) => r.price, render: (r) => numCell(r.price) },
-    { key: "market_cap", label: () => t("col.marketCap"), sortable: true, width: "92px", value: (r) => r.market_cap, render: (r) => `<td class="right"><span class="mono">${money(r.market_cap)}</span></td>` },
-    { key: "return_1y", label: () => t("m.return_1y"), sortable: true, width: "92px", value: (r) => r.return_1y, render: (r) => pctCell(r.return_1y) },
-    { key: "revenue_growth_yoy", label: () => t("m.revenue_growth_yoy"), sortable: true, width: "104px", value: (r) => r.revenue_growth_yoy, render: (r) => pctCell(r.revenue_growth_yoy) },
-    { key: "revenue_cagr_5y", label: () => t("m.revenue_cagr_5y"), sortable: true, width: "104px", value: (r) => r.revenue_cagr_5y, render: (r) => pctCell(r.revenue_cagr_5y) },
-    { key: "gross_margin", label: () => t("m.gross_margin"), sortable: true, width: "92px", value: (r) => r.gross_margin, render: (r) => numCell(r.gross_margin === null || r.gross_margin === undefined ? null : r.gross_margin * 100, 1) },
-    { key: "operating_margin", label: () => t("m.operating_margin"), sortable: true, width: "116px", value: (r) => r.operating_margin, render: (r) => numCell(r.operating_margin === null || r.operating_margin === undefined ? null : r.operating_margin * 100, 1) },
-    { key: "net_margin", label: () => t("m.net_margin"), sortable: true, width: "92px", value: (r) => r.net_margin, render: (r) => numCell(r.net_margin === null || r.net_margin === undefined ? null : r.net_margin * 100, 1) },
-    { key: "roe", label: () => t("m.roe"), sortable: true, width: "84px", value: (r) => r.roe, render: (r) => numCell(r.roe === null || r.roe === undefined ? null : r.roe * 100, 1) },
-    { key: "roic", label: () => t("m.roic"), sortable: true, width: "84px", value: (r) => r.roic, render: (r) => numCell(r.roic === null || r.roic === undefined ? null : r.roic * 100, 1) },
-    { key: "fcf_yield", label: () => t("m.fcf_yield"), sortable: true, width: "104px", value: (r) => r.fcf_yield, render: (r) => pctCell(r.fcf_yield) },
-    { key: "forward_pe", label: () => t("m.forward_pe"), sortable: true, width: "96px", value: (r) => r.forward_pe, render: (r) => `<td class="right"><span class="mono">${mult(r.forward_pe)}</span></td>` },
-    { key: "price_to_sales", label: () => t("m.price_to_sales"), sortable: true, width: "80px", value: (r) => r.price_to_sales, render: (r) => `<td class="right"><span class="mono">${mult(r.price_to_sales)}</span></td>` },
-    { key: "ev_to_ebitda", label: () => t("m.ev_to_ebitda"), sortable: true, width: "108px", value: (r) => r.ev_to_ebitda, render: (r) => `<td class="right"><span class="mono">${mult(r.ev_to_ebitda)}</span></td>` },
-    { key: "price_to_book", label: () => t("m.price_to_book"), sortable: true, width: "76px", value: (r) => r.price_to_book, render: (r) => `<td class="right"><span class="mono">${mult(r.price_to_book)}</span></td>` },
-    { key: "price_to_fcf", label: () => t("m.price_to_fcf"), sortable: true, width: "88px", value: (r) => r.price_to_fcf, render: (r) => `<td class="right"><span class="mono">${mult(r.price_to_fcf)}</span></td>` },
-    { key: "beta", label: () => t("m.beta"), sortable: true, width: "76px", value: (r) => r.beta, render: (r) => numCell(r.beta, 2) },
-    { key: "drawdown_52w", label: () => t("m.drawdown_52w"), sortable: true, width: "104px", value: (r) => r.drawdown_52w, render: (r) => pctCell(r.drawdown_52w) },
-    { key: "data_coverage", label: () => t("common.coverage"), sortable: true, width: "76px", value: (r) => r.data_coverage, render: (r) => `<td class="right"><span class="mono">${r.data_coverage}/21</span></td>` },
-    { key: "status", label: () => t("rf.jobs.status"), sortable: true, width: "92px", value: (r) => r.status || "", render: (r) => `<td><span class="faint" style="font-size:11.5px">${escapeHtml(r.status || DASH)}</span></td>` },
+    { key: "market_cap", label: () => t("col.marketCap"), sortable: true, width: "92px", value: (r) => r.market_cap, render: (r) => `<span class="mono">${money(r.market_cap)}</span>` },
+
+    /* ------------------------------------------------ returns & vs SPY */
+    { key: "return_1m", label: () => t("m.return_1m"), sortable: true, width: "86px", value: (r) => r.return_1m, render: (r) => pctCell(r.return_1m) },
+    { key: "return_3m", label: () => t("m.return_3m"), sortable: true, width: "86px", value: (r) => r.return_3m, render: (r) => pctCell(r.return_3m) },
+    { key: "return_6m", label: () => t("m.return_6m"), sortable: true, width: "86px", value: (r) => r.return_6m, render: (r) => pctCell(r.return_6m) },
+    { key: "return_1y", label: () => t("m.return_1y"), sortable: true, width: "88px", value: (r) => r.return_1y, render: (r) => pctCell(r.return_1y) },
+    { key: "return_ytd", label: () => t("m.return_ytd"), sortable: true, width: "88px", value: (r) => r.return_ytd, render: (r) => pctCell(r.return_ytd) },
+    { key: "return_3y", label: () => t("m.return_3y"), sortable: true, width: "88px", value: (r) => r.return_3y, render: (r) => pctCell(r.return_3y) },
+    { key: "excess_return_3m", label: () => t("m.excess_return_3m"), sortable: true, width: "104px", value: (r) => r.excess_return_3m, render: (r) => pctCell(r.excess_return_3m) },
+    { key: "excess_return_6m", label: () => t("m.excess_return_6m"), sortable: true, width: "104px", value: (r) => r.excess_return_6m, render: (r) => pctCell(r.excess_return_6m) },
+    { key: "excess_return_1y", label: () => t("m.excess_return_1y"), sortable: true, width: "104px", value: (r) => r.excess_return_1y, render: (r) => pctCell(r.excess_return_1y) },
+    { key: "benchmark_return_3m", label: () => t("m.benchmark_return_3m"), sortable: true, width: "92px", value: (r) => r.benchmark_return_3m, render: (r) => pctCell(r.benchmark_return_3m) },
+    { key: "benchmark_return_6m", label: () => t("m.benchmark_return_6m"), sortable: true, width: "92px", value: (r) => r.benchmark_return_6m, render: (r) => pctCell(r.benchmark_return_6m) },
+    { key: "benchmark_return_1y", label: () => t("m.benchmark_return_1y"), sortable: true, width: "92px", value: (r) => r.benchmark_return_1y, render: (r) => pctCell(r.benchmark_return_1y) },
+
+    /* ------------------------------------------------------------- risk */
+    { key: "volatility", label: () => t("m.volatility"), sortable: true, width: "96px", value: (r) => r.volatility, render: (r) => pctCell(r.volatility) },
+    { key: "sharpe_ratio", label: () => t("m.sharpe_ratio"), sortable: true, width: "84px", value: (r) => r.sharpe_ratio, render: (r) => numCell(r.sharpe_ratio, 2) },
+    { key: "sortino_ratio", label: () => t("m.sortino_ratio"), sortable: true, width: "88px", value: (r) => r.sortino_ratio, render: (r) => numCell(r.sortino_ratio, 2) },
+    { key: "beta", label: () => t("m.beta"), sortable: true, width: "92px", value: (r) => r.beta, render: (r) => numCell(r.beta, 2) },
+    { key: "beta_1y", label: () => t("m.beta_1y"), sortable: true, width: "84px", value: (r) => r.beta_1y, render: (r) => numCell(r.beta_1y, 2) },
+    { key: "max_drawdown_1y", label: () => t("m.max_drawdown_1y"), sortable: true, width: "104px", value: (r) => r.max_drawdown_1y, render: (r) => pctCell(r.max_drawdown_1y) },
+    { key: "drawdown_52w", label: () => t("m.drawdown_52w"), sortable: true, width: "96px", value: (r) => r.drawdown_52w, render: (r) => pctCell(r.drawdown_52w) },
+
+    /* -------------------------------------------------------- consensus */
+    { key: "analyst_target", label: () => t("m.analyst_target"), sortable: true, width: "92px", value: (r) => r.analyst_target, render: (r) => numCell(r.analyst_target) },
+    { key: "analyst_upside", label: () => t("m.analyst_upside"), sortable: true, width: "96px", value: (r) => r.analyst_upside, render: (r) => pctCell(r.analyst_upside) },
+
+    /* ------------------------------------------------------ fundamentals */
+    { key: "revenue_growth_yoy", label: () => t("m.revenue_growth_yoy"), sortable: true, width: "96px", value: (r) => r.revenue_growth_yoy, render: (r) => pctCell(r.revenue_growth_yoy) },
+    { key: "revenue_cagr_5y", label: () => t("m.revenue_cagr_5y"), sortable: true, width: "96px", value: (r) => r.revenue_cagr_5y, render: (r) => pctCell(r.revenue_cagr_5y) },
+    { key: "gross_margin", label: () => t("m.gross_margin"), sortable: true, width: "88px", value: (r) => r.gross_margin, render: (r) => numCell(r.gross_margin === null || r.gross_margin === undefined ? null : r.gross_margin * 100, 1) },
+    { key: "operating_margin", label: () => t("m.operating_margin"), sortable: true, width: "96px", value: (r) => r.operating_margin, render: (r) => numCell(r.operating_margin === null || r.operating_margin === undefined ? null : r.operating_margin * 100, 1) },
+    { key: "net_margin", label: () => t("m.net_margin"), sortable: true, width: "88px", value: (r) => r.net_margin, render: (r) => numCell(r.net_margin === null || r.net_margin === undefined ? null : r.net_margin * 100, 1) },
+    { key: "roe", label: () => t("m.roe"), sortable: true, width: "80px", value: (r) => r.roe, render: (r) => numCell(r.roe === null || r.roe === undefined ? null : r.roe * 100, 1) },
+    { key: "roic", label: () => t("m.roic"), sortable: true, width: "80px", value: (r) => r.roic, render: (r) => numCell(r.roic === null || r.roic === undefined ? null : r.roic * 100, 1) },
+    { key: "fcf_yield", label: () => t("m.fcf_yield"), sortable: true, width: "96px", value: (r) => r.fcf_yield, render: (r) => pctCell(r.fcf_yield) },
+    { key: "forward_pe", label: () => t("m.forward_pe"), sortable: true, width: "108px", value: (r) => r.forward_pe, render: (r) => multCell(r.forward_pe) },
+    { key: "price_to_sales", label: () => t("m.price_to_sales"), sortable: true, width: "92px", value: (r) => r.price_to_sales, render: (r) => multCell(r.price_to_sales) },
+    { key: "ev_to_ebitda", label: () => t("m.ev_to_ebitda"), sortable: true, width: "108px", value: (r) => r.ev_to_ebitda, render: (r) => multCell(r.ev_to_ebitda) },
+    { key: "price_to_book", label: () => t("m.price_to_book"), sortable: true, width: "96px", value: (r) => r.price_to_book, render: (r) => multCell(r.price_to_book) },
+    { key: "price_to_fcf", label: () => t("m.price_to_fcf"), sortable: true, width: "96px", value: (r) => r.price_to_fcf, render: (r) => multCell(r.price_to_fcf) },
+
+    /* ---------------------------------------------------------- metadata */
+    {
+      key: "coverage_pct", label: () => t("common.coverage"), sortable: true, width: "96px",
+      cell: "right",
+      value: (r) => r.coverage_pct,
+      render: (r) => `<span title="${r.data_coverage} / ${METRIC_COUNT} ${escapeHtml(t("common.metricsPresent"))}">${
+        FR.meter(r.coverage_pct === null || r.coverage_pct === undefined ? null : r.coverage_pct * 10)}</span>`,
+    },
+    { key: "status", label: () => t("rf.jobs.status"), sortable: true, width: "92px",
+      value: (r) => r.status || "",
+      render: (r) => `<span class="faint" style="font-size:11.5px">${escapeHtml(r.status || DASH)}</span>` },
   ];
 
   const COL_BY_KEY = Object.fromEntries(COLS.map((c) => [c.key, c]));
 
+  /* Column groups. `grp` drives the boundary rule and the small caption above
+     the first column of each block, so 29 metrics read as four labelled sets
+     instead of one undifferentiated field. */
+  const GROUP_OF = {
+    score_growth: "scores", score_profitability: "scores", score_cash: "scores",
+    score_valuation: "scores", score_market: "scores", score_overall: "scores",
+    profile: "scores",
+    return_1m: "returns", return_3m: "returns", return_6m: "returns",
+    return_1y: "returns", return_ytd: "returns", return_3y: "returns",
+    excess_return_3m: "returns", excess_return_6m: "returns", excess_return_1y: "returns",
+    benchmark_return_3m: "returns", benchmark_return_6m: "returns",
+    benchmark_return_1y: "returns",
+    volatility: "risk", sharpe_ratio: "risk", sortino_ratio: "risk",
+    beta: "risk", beta_1y: "risk", max_drawdown_1y: "risk", drawdown_52w: "risk",
+    analyst_target: "consensus", analyst_upside: "consensus",
+    revenue_growth_yoy: "fundamentals", revenue_cagr_5y: "fundamentals",
+    gross_margin: "fundamentals", operating_margin: "fundamentals",
+    net_margin: "fundamentals", roe: "fundamentals", roic: "fundamentals",
+    fcf_yield: "fundamentals", forward_pe: "fundamentals",
+    price_to_sales: "fundamentals", ev_to_ebitda: "fundamentals",
+    price_to_book: "fundamentals", price_to_fcf: "fundamentals",
+  };
+  const GROUP_LABEL = {
+    scores: "rk.grp.scores", returns: "rk.grp.returns",
+    risk: "rk.grp.risk", consensus: "rk.grp.consensus",
+    fundamentals: "rk.grp.fundamentals",
+  };
+
+  /** Header tooltips: the long-form hint for a metric, falling back to its label. */
+  function hintFor(col) {
+    const label = typeof col.label === "function" ? col.label() : col.label;
+    const hint = t(`m.${col.key}.hint`);
+    return hint === `m.${col.key}.hint` ? label : `${label} — ${hint}`;
+  }
+
   const state = {
     rows: [],
+    stale: null,
     view: "overall",
     sortKey: "rank",
     sortDir: 1,
     q: "",
     profile: "",
     eligibleOnly: false,
+    // Start with the comparison the screen is actually for: the five dimension
+    // scores plus the return/risk block. Everything else stays one click away
+    // in the column picker rather than making the default view unreadable.
     hidden: new Set([
-      "status", "price", "market_cap", "return_1y", "revenue_growth_yoy", "revenue_cagr_5y",
-      "gross_margin", "operating_margin", "net_margin", "roe", "roic", "fcf_yield",
-      "forward_pe", "price_to_sales", "ev_to_ebitda", "price_to_book", "price_to_fcf",
-      "beta", "drawdown_52w", "company",
+      "company", "detail", "status", "profile", "price", "market_cap",
+      "return_ytd", "return_3y", "benchmark_return_3m", "benchmark_return_6m",
+      "benchmark_return_1y", "sortino_ratio", "analyst_target", "coverage_pct",
+      "revenue_growth_yoy", "revenue_cagr_5y", "gross_margin", "operating_margin",
+      "net_margin", "roe", "roic", "fcf_yield", "forward_pe", "price_to_sales",
+      "ev_to_ebitda", "price_to_book", "price_to_fcf",
     ]),
     sourceLabel: "最近快照",
   };
@@ -154,17 +245,55 @@
     }).sort(compare);
   }
 
-  function renderHead() {
+  /** Extra classes for a column: frozen identity columns and group boundaries. */
+  function colClasses(col, visible) {
+    const cols = visible || visibleCols();
+    const index = cols.findIndex((c) => c.key === col.key);
+    const previous = index > 0 ? cols[index - 1] : null;
+    const group = GROUP_OF[col.key] || "";
+    const prevGroup = previous ? (GROUP_OF[previous.key] || "") : null;
+    const opensGroup = Boolean(group) && group !== prevGroup;
+    return [
+      RIGHT.has(col.key) ? "right" : "",
+      col.freeze ? `col-sticky col-freeze-${col.freeze}` : "",
+      // Group caption only when this column opens a new labelled block.
+      opensGroup ? "grp-start" : "",
+    ].filter(Boolean).join(" ");
+  }
+
+  /** Precompute the per-column class list once per render (not once per cell). */
+  function classMap() {
     const cols = visibleCols();
+    return { cols, byKey: Object.fromEntries(cols.map((c) => [c.key, colClasses(c, cols)])) };
+  }
+
+  /** Wrap rendered contents in a <td> carrying alignment, freeze and group rules. */
+  function decorateCell(inner, classes) {
+    const cls = classes ? ` class="${classes}"` : "";
+    return `<td${cls}>${inner}</td>`;
+  }
+
+  function renderHead() {
+    const { cols, byKey } = classMap();
+    // Size by content: a column ends up as wide as its widest of {header, cells},
+    // and the declared `width` is only a floor used as a nudge.
+    const minWidth = cols.reduce((sum, c) => sum + (parseFloat(c.width) || 90), 0);
+    const head = $("#headRow");
+    const table = head && head.closest("table");
+    if (table) table.style.minWidth = `${Math.max(minWidth, 720)}px`;
     $("#cols").innerHTML = cols.map((c) => `<col style="width:${c.width}" />`).join("");
-    $("#headRow").innerHTML = cols.map((c) => {
+    head.innerHTML = cols.map((c) => {
       const active = state.sortKey === c.key;
       const aria = active ? ` aria-sort="${state.sortDir === 1 ? "ascending" : "descending"}"` : "";
       const arrow = active ? (state.sortDir === 1 ? "▲" : "▼") : "▲";
-      const cls = [c.sortable ? "sortable" : "", RIGHT.has(c.key) ? "right" : ""].filter(Boolean).join(" ");
+      const cls = [c.sortable ? "sortable" : "", byKey[c.key]].filter(Boolean).join(" ");
       const label = typeof c.label === "function" ? c.label() : c.label;
-      return `<th class="${cls}"${c.width ? ` style="width:${c.width}"` : ""}${aria}${
-        c.sortable ? ` data-sort="${c.key}"` : ""}>${label}<span class="arrow">${arrow}</span></th>`;
+      const group = GROUP_OF[c.key];
+      const groupAttr = group && byKey[c.key].includes("grp-start")
+        ? ` data-group="${escapeHtml(t(GROUP_LABEL[group]))}"` : "";
+      return `<th class="${cls}"${c.width ? ` style="width:${c.width}"` : ""}${aria}${groupAttr}${
+        c.sortable ? ` data-sort="${c.key}"` : ""} title="${escapeHtml(hintFor(c))}">${
+        label}<span class="arrow">${arrow}</span></th>`;
     }).join("");
 
     $$("#headRow th[data-sort]").forEach((th) =>
@@ -177,7 +306,6 @@
   }
 
   function renderBody(rows) {
-    const cols = visibleCols();
     const body = $("#body");
     if (!state.rows.length) {
       body.innerHTML = "";
@@ -204,9 +332,12 @@
     }
 
     $("#emptyState").innerHTML = "";
+    // Reuse the class list the header just computed, so group rules and frozen
+    // columns line up between <th> and <td> (and no per-cell recomputation).
+    const { cols, byKey } = classMap();
     const html = rows.map((r, i) => `<tr class="rowlink" data-row="${escapeHtml(r.ticker)}"
         style="animation:tag-in .4s var(--ease) backwards;animation-delay:${Math.min(i * 14, 320)}ms">
-      ${cols.map((c) => c.render(r)).join("")}
+      ${cols.map((c) => decorateCell(c.render(r), byKey[c.key])).join("")}
     </tr>`).join("");
     body.innerHTML = html;
 
@@ -378,6 +509,50 @@
     }
   }
 
+  /* ---------------------------------------------------------------- staleness */
+  /* A snapshot written before the current metric set renders as a screen full
+     of blanks that is indistinguishable from a broken data source. Say which
+     it is, and offer the one action that fixes it. */
+  function metricName(key) {
+    const label = t(`m.${key}`);
+    return label === `m.${key}` ? key : label;
+  }
+
+  function renderStale(info) {
+    const host = $("#staleNotice");
+    if (!host) return;
+    if (!info || !info.stale) {
+      host.hidden = true;
+      host.innerHTML = "";
+      return;
+    }
+    const qs = params();
+    qs.delete("job_id");
+    qs.delete("run_id");
+    const href = `refresh.html?${qs.toString()}`;
+    let body;
+    if (info.reason === "older_metrics") {
+      const names = (info.missing_metrics || []).slice(0, 6).map(metricName).join("、");
+      const more = (info.missing_metrics || []).length > 6
+        ? ` 等 ${info.missing_metrics.length} 项` : "";
+      body = t("rk.stale.body", {
+        n: (info.missing_metrics || []).length,
+        metrics: names + more,
+      });
+    } else {
+      body = t("rk.stale.old", {
+        hours: Math.round(info.age_hours || 0),
+        limit: Math.round(info.stale_after_hours || 36),
+      });
+    }
+    host.hidden = false;
+    host.innerHTML = `<div class="stale-card" role="status">
+      <b>${escapeHtml(t("rk.stale.title"))}</b>
+      <p>${escapeHtml(body)}</p>
+      <a class="btn btn--primary" href="${href}">${escapeHtml(t("rk.stale.cta"))}</a>
+    </div>`;
+  }
+
   /* -------------------------------------------------------------------- load */
   function params() {
     const qs = new URLSearchParams(location.search);
@@ -394,17 +569,21 @@
       });
       state.rows = data.rows || [];
       state.errors = Object.entries(data.errors || {});
+      state.stale = data.staleness || null;
       state.sourceKey = qs.get("run_id")
         ? ["rk.source.run", { id: qs.get("run_id") }]
         : qs.get("job_id") ? ["rk.source.job", null] : ["common.latestSnapshot", null];
       state.sourceLabel = t(state.sourceKey[0], state.sourceKey[1]);
       $("#sourceBadge").innerHTML = `<span class="dot"></span>${escapeHtml(state.sourceLabel)}`;
+      renderStale(state.stale);
       render();
       if (state.errors.length) {
         toast(t("rk.toast.failed", { n: state.errors.length }), "warn", 4200);
       }
     } catch (err) {
       state.rows = [];
+      state.stale = null;
+      renderStale(null);
       $("#sourceBadge").textContent = err.status === 404 ? t("common.noData") : t("common.readFailed");
       render();
       if (err.status !== 404) toast(err.message || t("rk.err.load"), "err");
@@ -468,6 +647,7 @@
     document.addEventListener("fr:lang", () => {
       renderViewSeg();
       renderColToggles();
+      renderStale(state.stale);
       render();
       if (state.sourceKey) {
         state.sourceLabel = t(state.sourceKey[0], state.sourceKey[1]);

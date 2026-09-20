@@ -9,6 +9,7 @@ python-multipart>=0.0.12
 # akshare is the primary crawler facade requested by the project owner.
 akshare>=1.18
 requests>=2.32
+pypdf>=5.0              # TSMC issuer PDF cash-flow fallback
 curl_cffi>=0.7          # TLS-impersonation fallback (helps when a source blocks plain python-requests)
 tenacity>=9.0           # retry/backoff policy shared by every provider
 

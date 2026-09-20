@@ -12,7 +12,7 @@
 
   const DICT = [
     {
-      group: "dim.growth", weight: "25%",
+      group: "dim.growth", weight: "20%",
       items: [
         ["revenue_growth_yoy"],
         ["revenue_cagr_5y"],
@@ -21,7 +21,7 @@
       ],
     },
     {
-      group: "dim.profitability", weight: "25%",
+      group: "dim.profitability", weight: "15%",
       items: [
         ["gross_margin"],
         ["operating_margin"],
@@ -36,10 +36,11 @@
         ["fcf_margin"],
         ["fcf_yield"],
         ["ocf_to_net_income"],
+        ["debt_to_assets"],
       ],
     },
     {
-      group: "dim.valuation", weight: "20%",
+      group: "dim.valuation", weight: "25%",
       items: [
         ["forward_pe"],
         ["price_to_sales"],
@@ -49,12 +50,18 @@
       ],
     },
     {
-      group: "dim.market", weight: "10%",
+      group: "dim.market", weight: "20%",
       items: [
+        ["return_3m"],
+        ["return_6m"],
         ["return_1y"],
+        ["excess_return_3m"],
+        ["excess_return_6m"],
+        ["sharpe_ratio"],
+        ["volatility"],
+        ["beta_1y"],
+        ["max_drawdown_1y"],
         ["drawdown_52w"],
-        ["beta"],
-        ["debt_to_assets"],
       ],
     },
   ];
@@ -90,11 +97,10 @@
       prices: String(health.providers.prices || "").split("->").map((s) => s.trim()),
       quotes: String(health.providers.quotes || "").split("->").map((s) => s.trim()),
     } : null;
-    const yahoo = health ? Boolean(health.providers.yahoo_enabled) : false;
+    const yahoo = health ? Boolean(health.providers.yahoo_in_use) : false;
 
     host.innerHTML = PROVIDERS.map((p) => {
       const hops = (chains && chains[p.key] && chains[p.key].length) ? chains[p.key] : p.hops;
-      const live = hops.filter((h) => !/yahoo/i.test(h) || yahoo);
       return `<div class="glass srccard">
         <div class="top">
           <span class="ico">${icon(p.icon)}</span>

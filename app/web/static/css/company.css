@@ -4,6 +4,30 @@
    ========================================================================== */
 
 .pagebody .crumb { margin-bottom: 14px; }
+.insight-card { padding: 22px 26px; margin: 16px 0; }
+.insight-card h2 { margin: 0 0 6px; font-size: 19px; }
+.insight-summary { line-height: 1.85; font-size: 15px; color: var(--ink); }
+.insight-note { color: var(--muted); font-size: 12px; line-height: 1.7; margin: 12px 0 0; }
+.insight-pills { display: flex; gap: 8px; flex-wrap: wrap; }
+.insight-pill { border: 1px solid var(--hair); background: var(--well); border-radius: 999px; padding: 6px 12px; font-size: 12px; }
+.insight-pill b { color: var(--accent-deep); font-family: var(--mono); }
+.insight-facets { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; margin-top: 20px; }
+.insight-facet { font-size: 12px; color: var(--muted); }
+.insight-facet span { display: flex; justify-content: space-between; }.insight-facet small { color: var(--faint); }
+.insight-facet b { display: block; text-align: right; font-family: var(--mono); color: var(--accent-deep); }
+.insight-facet-track { margin: 8px 0; height: 6px; background: var(--well); border-radius: 5px; overflow: hidden; }
+.insight-facet-track i { display: block; height: 100%; background: var(--good); border-radius: 5px; }
+.insight-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+.insight-grid .insight-card { margin: 0; }
+.insight-facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 20px; }
+.insight-kv { display: flex; justify-content: space-between; gap: 10px; border-bottom: 1px solid var(--hair); padding: 12px 0; font-size: 12px; color: var(--muted); }
+.insight-kv strong { font-family: var(--mono); color: var(--ink); white-space: nowrap; }
+.insight-mood { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; color: var(--good); }
+.insight-mood strong { font-size: 24px; }.insight-mood small { color: var(--muted); }
+.insight-articles { margin: 16px 0 0; padding: 0; list-style: none; }
+.insight-articles li { display: flex; justify-content: space-between; gap: 15px; padding: 9px 0; border-top: 1px solid var(--hair); font-size: 12px; }
+.insight-articles a { color: var(--ink); }.insight-articles time { white-space: nowrap; color: var(--faint); }
+@media (max-width: 780px) { .insight-grid { grid-template-columns: 1fr; } .insight-facts { grid-template-columns: 1fr; } .insight-facets { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .pagebody .crumb a {
   color: var(--muted);
   text-decoration: none;
@@ -226,6 +250,28 @@
 .dimtable .mscore { font-size: 13.5px; }
 .dimtable tr.is-missing { opacity: 0.62; }
 .dimtable tr.is-missing .mlabel b { color: var(--muted); }
+
+/* A metric that is reported but deliberately not scored says so, instead of
+   leaving the score column blank — an empty cell is indistinguishable from a
+   metric that scored badly, which is what used to happen here. */
+.dimtable tr.is-reference { background: rgba(0, 0, 0, 0.012); }
+.dimtable tr.is-reference .mlabel b { font-weight: 500; color: var(--ink-2); }
+.reftag {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--hair-2);
+  background: var(--well);
+  color: var(--muted);
+  font-size: 9.5px;
+  font-style: normal;
+  font-weight: 500;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  vertical-align: 1px;
+}
+.dimtable td.mbar.is-ref { text-align: center; color: var(--faint); }
 
 /* Column rhythm comes from the <colgroup>: metric label / 本股 / 同行中位 /
    差值 / 池内名次 / 得分条 / 得分. Narrow screens drop the last columns so the

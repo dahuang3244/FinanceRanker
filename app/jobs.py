@@ -85,6 +85,32 @@ class JobManager:
         with self._lock:
             return self._jobs.get(self._current) if self._current else None
 
+    def running(self) -> Job | None:
+        """The most recently started job that is still in flight, if any."""
+        with self._lock:
+            active = [j for j in self._jobs.values() if not j.is_finished and j.rows]
+            active += [j for j in self._jobs.values() if j.status == "running"]
+        if not active:
+            return None
+        return max(active, key=lambda j: j.started_at)
+
+    def freshest(self) -> Job | None:
+        """The most recently *finished* job that produced rows.
+
+        Ordering by `finished_at` rather than by "whoever started last" matters
+        when more than one refresh is in flight, or when the same snapshot
+        directory is served by more than one instance: the job that started
+        first but finished last holds the newest numbers, and the job that
+        started last can still be empty. Even a finished job is only a
+        convenience — the caller prefers the newest stored snapshot, because a
+        refresh run by another process is newer than this process's memory.
+        """
+        with self._lock:
+            done = [j for j in self._jobs.values() if j.is_finished and j.rows]
+        if not done:
+            return None
+        return max(done, key=lambda j: j.finished_at or j.started_at)
+
     def list_jobs(self, limit: int = 20) -> list[dict]:
         with self._lock:
             jobs = sorted(self._jobs.values(), key=lambda j: j.started_at, reverse=True)

@@ -13,55 +13,39 @@ const FRCompany = (() => {
   } = FR;
 
   /* ------------------------------------------------------------- dimensions */
-  // `kind` drives formatting: ratio -> %, multiple -> x, money -> $, num -> plain
+  // Weights and display order only. The metric *lists* come from the backend
+  // (`/api/metrics`) so the scores the backend computes and the rows the UI
+  // renders can never disagree — a hand-maintained list here previously showed
+  // metrics with an empty score column and no explanation.
   const DIMENSIONS = [
-    {
-      key: "growth", i18n: "dim.growth", score: "score_growth", weight: 0.25, icon: "trend",
-      metrics: [
-        { attr: "revenue_growth_yoy", kind: "ratio", higher: true },
-        { attr: "revenue_cagr_5y", kind: "ratio", higher: true },
-        { attr: "eps_growth_fy1", kind: "ratio", higher: true },
-        { attr: "eps_cagr_5y", kind: "ratio", higher: true },
-      ],
-    },
-    {
-      key: "profitability", i18n: "dim.profitability", score: "score_profitability", weight: 0.25, icon: "coins",
-      metrics: [
-        { attr: "gross_margin", kind: "ratio", higher: true },
-        { attr: "operating_margin", kind: "ratio", higher: true },
-        { attr: "net_margin", kind: "ratio", higher: true },
-        { attr: "roe", kind: "ratio", higher: true },
-        { attr: "roic", kind: "ratio", higher: true },
-      ],
-    },
-    {
-      key: "cash", i18n: "dim.cash", score: "score_cash", weight: 0.20, icon: "layers",
-      metrics: [
-        { attr: "fcf_margin", kind: "ratio", higher: true },
-        { attr: "fcf_yield", kind: "ratio", higher: true },
-        { attr: "ocf_to_net_income", kind: "multiple", higher: true },
-      ],
-    },
-    {
-      key: "valuation", i18n: "dim.valuation", score: "score_valuation", weight: 0.20, icon: "shield",
-      metrics: [
-        { attr: "forward_pe", kind: "multiple", higher: false },
-        { attr: "price_to_sales", kind: "multiple", higher: false },
-        { attr: "ev_to_ebitda", kind: "multiple", higher: false },
-        { attr: "price_to_book", kind: "multiple", higher: false },
-        { attr: "price_to_fcf", kind: "multiple", higher: false },
-      ],
-    },
-    {
-      key: "market", i18n: "dim.market", score: "score_market", weight: 0.10, icon: "zap",
-      metrics: [
-        { attr: "return_1y", kind: "ratio", higher: true },
-        { attr: "debt_to_assets", kind: "ratio", higher: false },
-        { attr: "drawdown_52w", kind: "ratio", higher: true },
-        { attr: "beta", kind: "num", higher: false },
-      ],
-    },
+    { key: "growth", i18n: "dim.growth", score: "score_growth", weight: 0.20, icon: "trend" },
+    { key: "profitability", i18n: "dim.profitability", score: "score_profitability", weight: 0.15, icon: "coins" },
+    { key: "cash", i18n: "dim.cash", score: "score_cash", weight: 0.20, icon: "layers" },
+    { key: "valuation", i18n: "dim.valuation", score: "score_valuation", weight: 0.25, icon: "shield" },
+    { key: "market", i18n: "dim.market", score: "score_market", weight: 0.20, icon: "zap" },
   ];
+
+  /** Populated from the backend catalog on first mount. */
+  let CATALOG = null;
+  let CATALOG_BY_COMPONENT = null;
+
+  function buildCatalog(payload) {
+    CATALOG = payload.metrics || [];
+    CATALOG_BY_COMPONENT = {};
+    for (const m of CATALOG) {
+      (CATALOG_BY_COMPONENT[m.component] ||= []).push(m);
+    }
+    // Scored metrics first inside each block, then reference-only ones, so the
+    // numbers that drive the dimension score lead.
+    for (const list of Object.values(CATALOG_BY_COMPONENT)) {
+      list.sort((a, b) => (a.scored === b.scored ? a.order - b.order : a.scored ? -1 : 1));
+    }
+  }
+
+  function metricsFor(dim) {
+    if (!CATALOG_BY_COMPONENT) return [];
+    return CATALOG_BY_COMPONENT[dim.key] || [];
+  }
 
   const INPUT_GROUPS = [
     {
@@ -152,6 +136,11 @@ const FRCompany = (() => {
     return better + 1;
   }
 
+  /** How many metrics the backend scores, for the coverage badge. */
+  function scoredCount() {
+    return CATALOG ? CATALOG.filter((m) => m.scored).length : 0;
+  }
+
   /* ------------------------------------------------------------- formatting */
   function fmt(value, kind, digits = 1) {
     if (value === null || value === undefined || Number.isNaN(value)) return DASH;
@@ -183,7 +172,7 @@ const FRCompany = (() => {
               ${profilePill(row.profile)}
               ${row.rank ? `<span class="badge badge--accent">${t("common.rank")} #${row.rank}</span>` : ""}
               <span class="badge ${row.rank_eligible ? "badge--good" : "badge--low"}">${row.rank_eligible ? t("common.eligible") : t("common.notEligible")}</span>
-              <span class="badge">${t("common.coverage")} ${row.data_coverage}/21</span>
+              <span class="badge">${t("common.coverage")} ${row.data_coverage}/${scoredCount()}</span>
               ${row.currency && row.currency !== "USD"
                 ? `<span class="badge badge--mid">${t("co.currencyNonUsd", { ccy: escapeHtml(row.currency) })}</span>` : ""}
             </div>
@@ -226,18 +215,23 @@ const FRCompany = (() => {
   function metricRow(row, metric) {
     const value = row[metric.attr];
     const median = peerMedian(metric.attr);
-    const rank = withinGroupRank(metric.attr, value, metric.higher);
-    const za = "z_" + (FRCompany.Z_SUFFIX[metric.attr] || metric.attr);
-    const score = row[za];
+    const higher = metric.higher_is_better;
+    const rank = withinGroupRank(metric.attr, value, higher);
+    // Only a scored metric has a z-score. For a reference-only metric the score
+    // column says so instead of rendering an unexplained blank, which is
+    // indistinguishable from a metric that scored badly.
+    const score = metric.scored ? row["z_" + (Z_SUFFIX[metric.attr] || metric.attr)] : null;
     const hasValue = value !== null && value !== undefined;
     const delta = hasValue && median !== null ? value - median : null;
-    const deltaBetter = delta === null ? null : (metric.higher ? delta >= 0 : delta <= 0);
+    const deltaBetter = delta === null ? null : (higher ? delta >= 0 : delta <= 0);
 
     const present = pool.filter((r) => r[metric.attr] !== null && r[metric.attr] !== undefined).length;
+    const refTitle = metric.note ? `${t("co.referenceOnly")} — ${metric.note}` : t("co.referenceOnly");
     const cells = {
       metric: `<td class="mlabel">
-        <b>${escapeHtml(metric.label)}</b>
-        <em>${escapeHtml(metric.en)}</em>
+        <b>${escapeHtml(labelFor(metric.attr))}${
+          metric.scored ? "" : `<span class="reftag" title="${escapeHtml(refTitle)}">${t("co.refTag")}</span>`}</b>
+        <em>${escapeHtml(subLabelFor(metric.attr))}</em>
       </td>`,
       value: `<td class="right mnum">
         <span class="mono ${delta === null ? "" : deltaBetter ? "up" : "down"}">${fmt(value, metric.kind)}</span>
@@ -249,10 +243,14 @@ const FRCompany = (() => {
           : `<span class="mono ${deltaBetter ? "up" : "down"}">${delta > 0 ? "+" : ""}${metric.kind === "ratio" ? (delta * 100).toFixed(1) + "pt" : delta.toFixed(metric.kind === "num" ? 2 : 1)}</span>`}
       </td>`,
       rank: `<td class="right mrank">${rank === null ? `<span class="faint mono">${DASH}</span>` : `<span class="mono">${rank}<em>/${present}</em></span>`}</td>`,
-      bar: `<td class="mbar"><span class="mbarline"><i class="tone-${tone(score)}" style="transform:scaleX(${score === null || score === undefined ? 0 : Math.max(0, Math.min(1, score / 10)).toFixed(3)})"></i></span></td>`,
-      score: `<td class="right mscore tone-${tone(score)}"><span class="mono">${num(score, 2)}</span></td>`,
+      bar: metric.scored
+        ? `<td class="mbar"><span class="mbarline"><i class="tone-${tone(score)}" style="transform:scaleX(${score === null || score === undefined ? 0 : Math.max(0, Math.min(1, score / 10)).toFixed(3)})"></i></span></td>`
+        : `<td class="mbar is-ref"><span class="faint" style="font-size:10.5px">${t("co.notScored")}</span></td>`,
+      score: metric.scored
+        ? `<td class="right mscore tone-${tone(score)}"><span class="mono">${num(score, 2)}</span></td>`
+        : `<td class="right mscore"><span class="faint mono" title="${escapeHtml(refTitle)}">${DASH}</span></td>`,
     };
-    return `<tr class="${hasValue ? "" : "is-missing"}" data-attr="${metric.attr}">
+    return `<tr class="${hasValue ? "" : "is-missing"}${metric.scored ? "" : " is-reference"}" data-attr="${metric.attr}">
       ${columns().map((c) => cells[c.key]).join("")}
     </tr>`;
   }
@@ -286,7 +284,9 @@ const FRCompany = (() => {
 
   function dimensionBlock(row, dim) {
     const score = dimensionScore(row, dim);
-    const present = dim.metrics.filter((m) => row[m.attr] !== null && row[m.attr] !== undefined).length;
+    const metrics = metricsFor(dim);
+    const scored = metrics.filter((m) => m.scored);
+    const present = scored.filter((m) => row[m.attr] !== null && row[m.attr] !== undefined).length;
     return `
       <section class="glass dimblock" data-dim="${dim.key}">
         <header class="dimhead">
@@ -297,7 +297,7 @@ const FRCompany = (() => {
           </div>
           <div class="dimmeta">
             <span class="badge">${t("common.weight")} ${(dim.weight * 100).toFixed(0)}%</span>
-            <span class="badge">${present}/${dim.metrics.length} ${t("common.itemsWithValue")}</span>
+            <span class="badge">${present}/${scored.length} ${t("common.itemsWithValue")}</span>
           </div>
           <div class="dimscore tone-${tone(score)}">
             <b>${num(score, 2)}</b><span>/ 10</span>
@@ -312,13 +312,25 @@ const FRCompany = (() => {
                 return `<th${c.right ? ' class="right"' : ""}>${label}</th>`;
               }).join("")}</tr>
             </thead>
-            <tbody>${dim.metrics.map((m) => metricRow(row, m)).join("")}</tbody>
+            <tbody>${metrics.map((m) => metricRow(row, m)).join("")}</tbody>
           </table>
         </div>
       </section>`;
   }
 
   function inputBlock(row) {
+    const filingUnit = row.filing_currency && !row.fx_usd_per_twd
+      ? row.filing_currency : row.currency;
+    const displayInput = (attr, kind) => {
+      const value = row[attr];
+      if (value === null || value === undefined) return DASH;
+      if (attr === "share_count" || attr === "diluted_shares_fy0") return FR.compact(value) + " ADS";
+      if (kind === "money" && attr !== "market_cap" && filingUnit !== "USD")
+        return `${escapeHtml(filingUnit)} ${FR.compact(value)}`;
+      if (["gaap_eps", "sbc_adj_share", "restructuring_adj_share", "amortization_adj_share", "tax_adj_share", "model_adjusted_eps"].includes(attr))
+        return `${escapeHtml(filingUnit || "USD")} ${fmt(value, kind)}`;
+      return fmt(value, kind);
+    };
     return `<section class="glass dimblock inputs">
       <header class="dimhead">
         <span class="dimico">${icon("database")}</span>
@@ -334,7 +346,7 @@ const FRCompany = (() => {
             <dl class="dl">
               ${g.rows.map(([attr, kind]) => `
                 <dt>${t(`in.${attr}`)}</dt>
-                <dd class="${row[attr] === null || row[attr] === undefined ? "na" : ""}">${fmt(row[attr], kind)}</dd>`).join("")}
+                <dd class="${row[attr] === null || row[attr] === undefined ? "na" : ""}">${displayInput(attr, kind)}</dd>`).join("")}
             </dl>
           </div>`).join("")}
       </div>
@@ -345,6 +357,8 @@ const FRCompany = (() => {
     const items = [
       [t("co.field.secSource"), row.sec_source || DASH],
       [t("co.field.marketSource"), row.market_source || DASH],
+      [t("co.field.filingCurrency"), row.filing_currency || row.currency || DASH],
+      [t("co.field.fxRate"), row.fx_usd_per_twd ? `1 TWD = ${row.fx_usd_per_twd.toFixed(6)} USD; ${row.fx_source || ""}` : DASH],
       [t("co.field.nongaapSource"), row.non_gaap_source || DASH],
       [t("co.field.quality"), row.source_quality || DASH],
       [t("co.field.shareBasis"), row.share_basis || DASH],
@@ -409,6 +423,7 @@ const FRCompany = (() => {
       <div class="crumb"><a href="${rankingHref}">${t("nav.ranking")}</a><span class="sep">/</span>
         <b>${escapeHtml(row.ticker)}</b></div>
       ${heroCard(row)}
+      <div id="companyInsights" aria-live="polite"></div>
       <div class="detailbar">
         ${nav}
         <span class="spacer"></span>
@@ -428,7 +443,7 @@ const FRCompany = (() => {
       [t("common.overallOfTen"), num(row.score_overall, 2)],
       [t("common.rank"), row.rank ?? ""],
       [t("common.profile"), FR.profileLabel(row.profile)],
-      [t("common.coverage"), `${row.data_coverage}/21`],
+      [t("common.coverage"), `${row.data_coverage}/${scoredCount()}`],
     ];
     meta.forEach(([k, v]) => lines.push(`${k}\t${v}`));
     lines.push("");
@@ -438,14 +453,14 @@ const FRCompany = (() => {
     lines.push("");
     lines.push([t("common.metric"), t("common.stock"), t("common.peerMedian"),
                 t("common.rank"), t("common.score"), t("common.direction")].join("\t"));
-    DIMENSIONS.forEach((d) => d.metrics.forEach((m) => {
+    DIMENSIONS.forEach((d) => metricsFor(d).forEach((m) => {
       lines.push([
-        labelFor(m.attr),
+        labelFor(m.attr) + (m.scored ? "" : ` (${t("co.refTag")})`),
         fmt(row[m.attr], m.kind),
         fmt(peerMedian(m.attr), m.kind),
-        withinGroupRank(m.attr, row[m.attr], m.higher) ?? "",
-        num(row["z_" + (Z_SUFFIX[m.attr] || m.attr)], 2),
-        m.higher ? t("common.higher") : t("common.lower"),
+        withinGroupRank(m.attr, row[m.attr], m.higher_is_better) ?? "",
+        m.scored ? num(row["z_" + (Z_SUFFIX[m.attr] || m.attr)], 2) : "",
+        m.higher_is_better ? t("common.higher") : t("common.lower"),
       ].join("\t"));
     }));
     return lines.join("\n");
@@ -473,11 +488,38 @@ const FRCompany = (() => {
     revenue_growth_yoy: "growth_yoy", revenue_cagr_5y: "revenue_cagr",
     eps_growth_fy1: "eps_growth_fy1", eps_cagr_5y: "eps_cagr",
     gross_margin: "gross_margin", operating_margin: "operating_margin", net_margin: "net_margin",
-    roe: "roe", roic: "roic", fcf_margin: "fcf_margin", fcf_yield: "fcf_yield",
-    ocf_to_net_income: "cash_conversion", forward_pe: "forward_pe", price_to_sales: "price_sales",
+    roe: "roe", roic: "roic", roa: "roa",
+    fcf_margin: "fcf_margin", fcf_yield: "fcf_yield",
+    ocf_to_net_income: "cash_conversion", capex_intensity: "capex_intensity",
+    forward_pe: "forward_pe", price_to_sales: "price_sales",
     ev_to_ebitda: "ev_ebitda", price_to_book: "price_book", price_to_fcf: "price_fcf",
-    return_1y: "return_1y", debt_to_assets: "debt_assets", drawdown_52w: "drawdown", beta: "beta",
+    return_1y: "return_1y", return_3m: "return_3m", return_6m: "return_6m",
+    excess_return_1y: "excess_return_1y",
+    excess_return_3m: "excess_return_3m", excess_return_6m: "excess_return_6m",
+    volatility: "volatility", sharpe_ratio: "sharpe", sortino_ratio: "sortino",
+    max_drawdown_1y: "max_drawdown", beta_1y: "beta_1y",
+    debt_to_assets: "debt_assets", drawdown_52w: "drawdown", beta: "beta",
   };
+
+  /** Fetch the backend's metric catalogue once; every block is built from it. */
+  let catalogPromise = null;
+
+  async function ensureCatalog() {
+    if (CATALOG) return CATALOG;
+    if (!catalogPromise) {
+      catalogPromise = api.metrics()
+        .then((payload) => {
+          buildCatalog(payload);
+          return CATALOG;
+        })
+        .catch((err) => {
+          catalogPromise = null;   // allow a retry on the next mount
+          toast(err.message || t("co.catalogFailed"), "err");
+          throw err;
+        });
+    }
+    return catalogPromise;
+  }
 
   /* -------------------------------------------------------------- page entry */
   function params() {
@@ -513,6 +555,9 @@ const FRCompany = (() => {
     document.title = `${ticker} · ${t("co.title")} · FinanceRanker`;
 
     try {
+      // The catalogue defines which metrics exist and which are scored, so it
+      // is fetched before anything is rendered from it.
+      await ensureCatalog();
       const rows = await ensurePool({ job_id, run_id }, { force });
       const row = rows.find((r) => r.ticker === ticker);
       if (!row) {
@@ -555,7 +600,7 @@ const FRCompany = (() => {
   }
 
   return {
-    mount, render, relabel, DIMENSIONS, INPUT_GROUPS, Z_SUFFIX,
+    mount, render, relabel, ensureCatalog, DIMENSIONS, INPUT_GROUPS, Z_SUFFIX,
     peerMedian, withinGroupRank, fmt, toTsv,
   };
 })();
