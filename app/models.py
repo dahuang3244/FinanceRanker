@@ -68,6 +68,86 @@ class AnalystView(BaseModel):
     as_of: datetime | None = None
 
 
+class RatingCounts(BaseModel):
+    """One period's rating distribution, newest period first in the list."""
+
+    period: str
+    strong_buy: int = 0
+    buy: int = 0
+    hold: int = 0
+    sell: int = 0
+    strong_sell: int = 0
+
+    @property
+    def total(self) -> int:
+        return self.strong_buy + self.buy + self.hold + self.sell + self.strong_sell
+
+
+class AnalystAction(BaseModel):
+    """A single published rating or target change.
+
+    Kept as raw as Yahoo reports it: `action` is up/down/init/main/reit and
+    `price_target_action` is Raises/Lowers/Announces, so a caller can decide how
+    to summarise rather than inheriting our reading of it.
+    """
+
+    date: date
+    firm: str
+    action: str | None = None
+    from_grade: str | None = None
+    to_grade: str | None = None
+    price_target_action: str | None = None
+    price_target: float | None = None
+    prior_price_target: float | None = None
+
+
+class EarningsSurprise(BaseModel):
+    """One reported quarter against the consensus that preceded it."""
+
+    period: str
+    quarter_end: date | None = None
+    eps_actual: float | None = None
+    eps_estimate: float | None = None
+    eps_difference: float | None = None
+    surprise_pct: float | None = None
+    currency: str | None = None
+
+
+class EarningsEstimate(BaseModel):
+    """Forward consensus for one period (`0q`, `+1q`, `0y`, `+1y`)."""
+
+    period: str
+    end_date: str | None = None
+    eps_avg: float | None = None
+    eps_low: float | None = None
+    eps_high: float | None = None
+    eps_year_ago: float | None = None
+    analyst_count: int | None = None
+    growth: float | None = None
+    revenue_avg: float | None = None
+
+
+class AnalystDetail(BaseModel):
+    """Everything the analyst section shows for one company."""
+
+    ticker: str
+    target_mean: float | None = None
+    target_median: float | None = None
+    target_high: float | None = None
+    target_low: float | None = None
+    recommendation: str | None = None
+    recommendation_mean: float | None = None
+    current_price: float | None = None
+    ratings: list[RatingCounts] = Field(default_factory=list)
+    actions: list[AnalystAction] = Field(default_factory=list)
+    earnings_history: list[EarningsSurprise] = Field(default_factory=list)
+    estimates: list[EarningsEstimate] = Field(default_factory=list)
+    next_earnings_date: str | None = None
+    source: str = ""
+    as_of: datetime | None = None
+    notes: list[str] = Field(default_factory=list)
+
+
 class FactSeries(BaseModel):
     """One annual figure series (newest first)."""
 

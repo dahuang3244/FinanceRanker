@@ -473,6 +473,7 @@ const FRCompany = (() => {
       </div>
       ${scoreRail(row)}
       ${DIMENSIONS.map((d) => dimensionBlock(row, d)).join("")}
+      <div id="analystSection" aria-live="polite"></div>
       ${inputBlock(row)}
       ${provenanceBlock(row)}`;
   }
@@ -613,6 +614,9 @@ const FRCompany = (() => {
       const neighbours = rows.slice().sort((a, b) => (a.rank ?? 1e9) - (b.rank ?? 1e9));
       lastRender = { row, neighbours };
       host.innerHTML = render(row, { rankedNeighbours: neighbours });
+      // The analyst section is enrichment, fetched separately so a slow or
+      // unavailable endpoint never delays the scored comparison above it.
+      if (typeof FRAnalyst !== "undefined") FRAnalyst.mount(row.ticker);
       const copy = $("#copyDetail");
       // keep the column rhythm correct when the breakpoint changes
       const onResize = FR.debounce(() => {
@@ -636,6 +640,8 @@ const FRCompany = (() => {
     const host = $("#companyBody");
     if (!host) return;
     host.innerHTML = render(lastRender.row, { rankedNeighbours: lastRender.neighbours });
+    // Repaint the analyst section from the payload already in memory.
+    if (typeof FRAnalyst !== "undefined") FRAnalyst.relabel();
     const copy = $("#copyDetail");
     if (copy) copy.addEventListener("click", () => copyDetail(lastRender.row));
     document.title = `${lastRender.row.ticker} · ${lastRender.row.company || t("co.crumb")} · FinanceRanker`;

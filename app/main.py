@@ -382,6 +382,35 @@ async def metrics_catalog() -> dict:
     }
 
 
+@app.get("/api/analyst/{ticker}")
+async def analyst_detail(ticker: str) -> dict:
+    """Sell-side ratings, published target changes, earnings surprises and estimates.
+
+    Enrichment, not a scored input: none of it feeds the peer ranking. It is
+    fetched on demand so adding a company to the comparison pool costs one
+    request rather than one per section.
+    """
+    from app.pipeline import validate_ticker
+    from app.health import yahoo_usable
+    from app.providers.yahoo_analyst import get_analyst_detail
+
+    try:
+        symbol = validate_ticker(ticker)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    detail = await asyncio.to_thread(get_analyst_detail, symbol, allow_yahoo=yahoo_usable())
+    if detail is None:
+        return {
+            "ticker": symbol, "available": False,
+            "reason": "Yahoo has no analyst coverage for this symbol, or the "
+                      "crumb-authenticated endpoint is unreachable",
+        }
+    payload = detail.model_dump(mode="json")
+    payload["available"] = True
+    return payload
+
+
 @app.get("/api/ticker/{ticker}")
 async def ticker_detail(ticker: str) -> dict:
     rows, _ = await _resolve_rows(None, None)

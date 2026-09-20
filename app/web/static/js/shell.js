@@ -91,6 +91,8 @@ const FR = (() => {
     ranking: (opts = {}) => api.get("/api/ranking", opts),
     // Named weight presets the ranking can be re-scored under.
     strategies: () => api.get("/api/strategies"),
+    // Sell-side ratings, target changes, earnings surprises and estimates.
+    analyst: (ticker) => api.get(`/api/analyst/${encodeURIComponent(ticker)}`),
     // The metric catalogue: which metrics exist, their component and whether
     // the backend scores them. Drives the company detail blocks.
     metrics: () => api.get("/api/metrics"),

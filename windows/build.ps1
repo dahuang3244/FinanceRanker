@@ -90,6 +90,8 @@ if (Get-Command node -ErrorAction SilentlyContinue) {
     if ($LASTEXITCODE -ne 0) { throw "company insights UI failed" }
     node "tests/test_ranking_table.js"
     if ($LASTEXITCODE -ne 0) { throw "ranking table guard failed" }
+    node "tests/test_analyst_ui.js"
+    if ($LASTEXITCODE -ne 0) { throw "ranking table guard failed" }
     node "tests/test_risk_labels.js"
     if ($LASTEXITCODE -ne 0) { throw "return/risk metric labels failed" }
 }
