@@ -67,6 +67,9 @@ def compute_row(
     row = MetricRow(
         ticker=ticker,
         currency=quote.currency or fund.currency or "USD",
+        # The currency the filing figures are in — the trading currency too, once
+        # a foreign filing has been restated (see providers.fundamentals).
+        filing_currency=fund.currency or "USD",
         fetched_at=datetime.now(),
     )
     row.company = fund.entity_name or quote.name or ticker
@@ -93,7 +96,7 @@ def compute_row(
     # mismatch, drop the affected figures and say so plainly.
     mismatch_note: str | None = None
     if (fund.currency or "USD").upper() != (row.currency or "USD").upper():
-        dropped = _drop_cross_currency(row, fund.currency, row.currency)
+        dropped = _drop_cross_currency(row)
         mismatch_note = (
             f"Reporting currency {fund.currency} differs from trading currency "
             f"{row.currency} (ADR / foreign private issuer); {dropped} withheld "
@@ -104,14 +107,29 @@ def compute_row(
 
     row.data_coverage = compute_coverage(row)
 
-    # Status/notes are composed last so the currency warning survives.
-    if row.status != "Partial filing data" and (
-        row.revenue_fy0 is not None and row.gaap_eps is not None and row.operating_income_fy0 is not None
-    ):
+    # Status/notes are composed last so the currency warning survives. Provider
+    # warnings (`fund.notes`) are carried into the row as well: a statement that
+    # failed to download is the difference between "this issuer has no debt
+    # figure" and "we could not read its balance sheet", and only the row notes
+    # ever reach the user.
+    provider_notes = list(fund.notes)
+    # A currency mismatch alone is disqualifying for the "Refreshed" badge: such
+    # a row is complete in its filing currency yet intentionally missing every
+    # price-based ratio, so it must not be labelled as a clean refresh.
+    complete = (
+        mismatch_note is None
+        and row.revenue_fy0 is not None
+        and row.gaap_eps is not None
+        and row.operating_income_fy0 is not None
+    )
+    if complete:
         row.status = "Refreshed"
-        row.notes = (
-            f"{fund.source} annual facts + {history.source} price history. "
-            "Model EPS adjustments are after-tax per-share estimates; review the reconciliation."
+        row.notes = "; ".join(
+            [
+                f"{fund.source} annual facts + {history.source} price history. "
+                "Model EPS adjustments are after-tax per-share estimates; review the reconciliation."
+            ]
+            + provider_notes
         )
     else:
         missing = [
@@ -128,8 +146,10 @@ def compute_row(
             parts.append(f"missing: {', '.join(missing)}")
         if mismatch_note:
             parts.append(mismatch_note)
+        # Kept to the short label on purpose: the currency detail belongs in the
+        # notes (it is a paragraph) while `status` is a narrow table column.
         row.status = "Partial filing data"
-        row.notes = "; ".join(parts) + "."
+        row.notes = "; ".join(parts + provider_notes) + "."
 
     return row
 
@@ -371,13 +391,17 @@ _CROSS_CURRENCY_FIELDS = (
 )
 
 
-def _drop_cross_currency(row: MetricRow, reporting: str, trading: str) -> str:
-    """Clear price-dependent figures and return a human-readable summary."""
+def _drop_cross_currency(row: MetricRow) -> str:
+    """Clear price-dependent figures and return a human-readable summary.
+
+    The caller owns `status` and names the two currencies; this only reports
+    *what* was withheld, so the short status label and the longer explanation in
+    `notes` stay separate.
+    """
     for field in _CROSS_CURRENCY_FIELDS:
         setattr(row, field, None)
     # ROIC / margins are currency-free ratios, so they survive; but ROE and
     # returns that mix the market cap do not. Recompute the pure ratios.
-    row.status = f"Partial filing data ({reporting} reporting vs {trading} trading)"
     return "market cap and all price-based multiples"
 
 
@@ -413,15 +437,29 @@ def _raw_filing_block(row: MetricRow, fund: Fundamentals) -> None:
     row.amortization_fy0 = _series_value(fund.amortization, anchor)
 
 
-def _depreciation_amortization(fund: Fundamentals, anchor: date | None) -> float | None:
-    """Prefer a combined D&A tag; otherwise add separate depreciation + amortization.
+# Tags that carry depreciation only. When one of these supplied the "combined"
+# series, intangibles amortisation still has to be added to reach D&A; a genuinely
+# combined tag (…AndAmortisation…, …AndAccretion…) already includes it.
+_DEPRECIATION_ONLY_TAGS = {
+    "Depreciation",
+    "DepreciationExpense",
+    "DepreciationDepletionAndAmortizationPropertyPlantAndEquipment",
+}
 
-    `depreciation_amortization` already carries the `Depreciation` fallback tag
-    from the provider, so this only needs to add intangibles amortization when
-    the combined figure was absent.
+
+def _depreciation_amortization(fund: Fundamentals, anchor: date | None) -> float | None:
+    """Prefer a combined D&A tag, otherwise depreciation + amortisation.
+
+    `depreciation_amortization` carries the `Depreciation` fallback tag from the
+    provider, so a filer that tags depreciation and amortisation separately (TSM
+    files `DepreciationExpense` and `AmortisationExpense`) used to report only the
+    depreciation half of D&A -- which understates EBITDA and `da_fy0`.
     """
-    combined = _series_value(fund.depreciation_amortization, anchor)
-    if combined is not None:
-        return combined
+    combined_series = fund.depreciation_amortization
+    combined = _series_value(combined_series, anchor)
     amort = _series_value(fund.amortization, anchor)
-    return amort if amort is not None else None
+    if combined is not None:
+        if amort is not None and combined_series is not None and combined_series.tag in _DEPRECIATION_ONLY_TAGS:
+            return combined + amort
+        return combined
+    return amort

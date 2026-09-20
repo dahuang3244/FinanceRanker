@@ -32,7 +32,7 @@ python -m pip install -r requirements.txt
 # ---- tests before shipping anything
 Write-Host "`n-- running tests" -ForegroundColor Cyan
 $env:PYTHONPATH = $root
-foreach ($t in @("test_engine","test_preview","test_sectors","test_scale","test_health")) {
+foreach ($t in @("test_engine","test_fundamentals","test_preview","test_sectors","test_scale","test_company_render","test_health")) {
     python "tests/$t.py"
     if ($LASTEXITCODE -ne 0) { throw "$t failed" }
 }
@@ -42,28 +42,12 @@ foreach ($t in @("test_engine","test_preview","test_sectors","test_scale","test_
 # ---- load from a frozen bundle. The app drives its own Chromium instead, so it
 # ---- depends on nothing the target machine may or may not have.
 Write-Host "`n-- staging the bundled browser" -ForegroundColor Cyan
-$ProgressPreference = "SilentlyContinue"
-if (Test-Path "vendor\chromium\chrome.exe") {
-    Write-Host "already staged, skipping download"
-} else {
-    $meta = Invoke-RestMethod "https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions-with-downloads.json"
-    $stable = $meta.channels.Stable
-    $url = ($stable.downloads.chrome | Where-Object { $_.platform -eq "win64" }).url
-    if (-not $url) { throw "could not resolve a win64 Chrome for Testing URL" }
-    Write-Host "Chrome for Testing $($stable.version)"
-    Write-Host "downloading $url (about 200 MB)"
-    $zip = Join-Path $env:TEMP "chrome-win64.zip"
-    # curl.exe rather than Invoke-WebRequest: ~200 MB, and IWR's progress
-    # rendering makes it several times slower.
-    curl.exe -L --fail --retry 3 -o $zip $url
-    if ($LASTEXITCODE -ne 0) { throw "browser download failed (curl exit $LASTEXITCODE)" }
-    Expand-Archive -Path $zip -DestinationPath $env:TEMP -Force
-    New-Item -ItemType Directory -Force -Path "vendor\chromium" | Out-Null
-    Copy-Item "$env:TEMP\chrome-win64\*" "vendor\chromium\" -Recurse -Force
-    if (-not (Test-Path "vendor\chromium\chrome.exe")) { throw "chrome.exe was not staged" }
-}
-$mb = (Get-ChildItem "vendor\chromium" -Recurse -File | Measure-Object Length -Sum).Sum / 1MB
-Write-Host ("staged Chromium: {0:N1} MB" -f $mb) -ForegroundColor Green
+# No -Force: an already-good Chromium staging is reused, so a local rebuild does
+# not re-download 350 MB. stage_chromium.ps1 re-stages on its own when what it
+# finds is a Chrome for Testing tree, which is the distribution this replaced
+# (that one pops an "only for automated testing" info bar on every launch).
+& (Join-Path $PSScriptRoot "stage_chromium.ps1")
+if ($LASTEXITCODE -ne 0) { throw "staging the bundled browser failed (exit $LASTEXITCODE)" }
 
 # ---- build
 Write-Host "`n-- building with PyInstaller" -ForegroundColor Cyan

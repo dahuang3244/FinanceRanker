@@ -105,6 +105,45 @@ const FRCompany = (() => {
     return FRI18n.current() === "zh" ? entry[1] : entry[0];
   }
 
+  /** Currency the filings are in (what every raw-input figure is quoted in). */
+  function filingCurrency(row) {
+    return row.filing_currency || row.currency || "USD";
+  }
+
+  /**
+   * Whether the filings and the traded price are in different currencies.
+   *
+   * Keyed on filing vs trading, not on "is it USD": a foreign private issuer's
+   * ADR trades in USD while its 20-F is filed in the home currency, so the old
+   * `row.currency !== "USD"` test never fired for exactly the issuers it was
+   * written for (TSM), and the TWD figures below looked like US dollars.
+   */
+  function crossCurrency(row) {
+    return !!row.currency && filingCurrency(row) !== row.currency;
+  }
+
+  /** Whether a filing currency is a real one; "unconfirmed" is not. */
+  function isCurrency(ccy) {
+    return /^[A-Z]{3}$/.test(ccy || "");
+  }
+
+  /** Hero badge for a filing currency that is not the traded one. */
+  function currencyBadge(ccy) {
+    return isCurrency(ccy) ? t("co.currencyNonUsd", { ccy }) : t("co.currencyUnknown");
+  }
+
+  /** Why those figures are withheld — the badge's tooltip. */
+  function currencyHint(ccy) {
+    return isCurrency(ccy) ? t("co.currencyNonUsd.hint", { ccy }) : t("co.currencyUnknown.hint");
+  }
+
+  /** Unit label for the raw filing inputs block. */
+  function inputsCurrency(ccy) {
+    return isCurrency(ccy)
+      ? t("co.calcInputs.currency", { ccy })
+      : t("co.calcInputs.currencyUnknown");
+  }
+
   /* ----------------------------------------------------------- pool helpers */
   let pool = [];
   let lastRender = null;                 // last painted company, for language flips
@@ -184,8 +223,8 @@ const FRCompany = (() => {
               ${row.rank ? `<span class="badge badge--accent">${t("common.rank")} #${row.rank}</span>` : ""}
               <span class="badge ${row.rank_eligible ? "badge--good" : "badge--low"}">${row.rank_eligible ? t("common.eligible") : t("common.notEligible")}</span>
               <span class="badge">${t("common.coverage")} ${row.data_coverage}/21</span>
-              ${row.currency && row.currency !== "USD"
-                ? `<span class="badge badge--mid">${t("co.currencyNonUsd", { ccy: escapeHtml(row.currency) })}</span>` : ""}
+              ${crossCurrency(row)
+                ? `<span class="badge badge--mid" title="${escapeHtml(currencyHint(filingCurrency(row)))}">${escapeHtml(currencyBadge(filingCurrency(row)))}</span>` : ""}
             </div>
             <h1 class="cname">${escapeHtml(row.company || row.ticker)}</h1>
             <p class="cmeta">
@@ -235,9 +274,12 @@ const FRCompany = (() => {
 
     const present = pool.filter((r) => r[metric.attr] !== null && r[metric.attr] !== undefined).length;
     const cells = {
+      // `DIMENSIONS` entries carry only `attr`, so the name comes from the
+      // shared i18n dictionary. Reading `metric.label` / `metric.en` here left
+      // every row's 指标 cell blank for every ticker.
       metric: `<td class="mlabel">
-        <b>${escapeHtml(metric.label)}</b>
-        <em>${escapeHtml(metric.en)}</em>
+        <b>${escapeHtml(labelFor(metric.attr))}</b>
+        <em>${escapeHtml(subLabelFor(metric.attr))}</em>
       </td>`,
       value: `<td class="right mnum">
         <span class="mono ${delta === null ? "" : deltaBetter ? "up" : "down"}">${fmt(value, metric.kind)}</span>
@@ -326,6 +368,9 @@ const FRCompany = (() => {
           <h2>${t("co.calcInputs")}<em>${t("co.calcInputs.en")}</em></h2>
           <p>${t("co.calcInputs.hint")}</p>
         </div>
+        ${crossCurrency(row)
+          ? `<div class="dimmeta"><span class="badge badge--mid">${escapeHtml(inputsCurrency(filingCurrency(row)))}</span></div>`
+          : ""}
       </header>
       <div class="inputgrid">
         ${INPUT_GROUPS.map((g) => `

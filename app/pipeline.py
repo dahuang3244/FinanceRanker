@@ -77,7 +77,12 @@ def fetch_one(ticker: str, benchmark: PriceHistory | None = None) -> tuple[Metri
         )
 
     try:
-        fund = fund_provider.get_fundamentals(ticker)
+        # The quote is already in hand, and its currency is what decides whether a
+        # foreign filing gets restated onto the ADR basis or has its price-based
+        # figures withheld.
+        fund = fund_provider.get_fundamentals(
+            ticker, trading_currency=quote.currency or history.currency
+        )
     except Exception as exc:
         return None, f"fundamentals unavailable: {exc}"
 

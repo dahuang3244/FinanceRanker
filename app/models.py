@@ -78,7 +78,19 @@ class Fundamentals(BaseModel):
 
     ticker: str
     entity_name: str | None = None
+    # The unit every series below is expressed in. After a successful ADR
+    # conversion (see `providers.fundamentals.convert_to_trading_currency`) this
+    # is the *trading* currency and `filing_currency` records the original one.
     currency: str = "USD"
+    # The issuer's own filing currency, when it differs from `currency`.
+    filing_currency: str | None = None
+    # ADR conversion provenance, filled in only when a conversion was applied.
+    # `fx_rates` maps a fiscal period end to "filing-currency units per one
+    # trading-currency unit" (TSM FY2024: 32.79 TWD per USD), taken from the
+    # filer's own US$ convenience translation in the same filing.
+    fx_rates: dict[str, float] = Field(default_factory=dict)
+    # Common shares represented by one ADS (TSM: 5, per its 20-F).
+    ads_ratio: float | None = None
     fiscal_end: date | None = None
     source: str = ""
     source_url: str | None = None
@@ -118,7 +130,15 @@ class MetricRow(BaseModel):
 
     ticker: str
     company: str | None = None
+    # The traded currency — what `price` and any provider-quoted figure is in.
     currency: str = "USD"
+    # The currency the *filing-derived* figures on this row are quoted in, i.e.
+    # `Fundamentals.currency` after any ADR conversion. Normally identical to
+    # `currency`; it differs for a foreign private issuer whose ADR trades in USD
+    # but whose statements could not be converted (TSM without an ADS ratio), and
+    # then every figure from `revenue_fy0` to `gaap_eps` is in this currency
+    # while `price` and the market data are in `currency`.
+    filing_currency: str | None = None
     status: str = "pending"
     notes: str = ""
 

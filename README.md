@@ -87,6 +87,7 @@ FR_SCHEDULE_HOURS=6       # 每 6 小时自动刷新（定时+历史快照）
 FR_SCHEDULE_CRON=0 22 * * 1-5   # 或工作日 22:00（本地时区）
 FR_ENABLE_YAHOO=false     # 旧开关；设 true 则强制启用雅虎
 FR_YAHOO_MODE=auto        # auto=探测通就用 / on / off
+FR_ADS_RATIOS=TSM=5       # 每份 ADS 对应多少普通股（见 §8.16），可追加其它 ADR
 ```
 
 > ⚠️ **macOS 系统代理坑**：如果系统里配了代理但没启动，`requests` 会读到它并抛
@@ -247,11 +248,15 @@ app/
     ├── js/scale.js        分数配色单一真源（红↔绿发散色阶）
     └── js/                 shell（导航+API+格式化）、drawer（标的明细）、各页脚本
 
-desktop.py                 桌面入口：起本地服务 + 原生窗口（系统 webview）
-finance_ranker.spec        PyInstaller 配置（含 py_mini_racer 原生库与静态资源）
-windows/installer.iss      Inno Setup 安装包脚本（中文向导 + WebView2 按需下载）
+desktop.py                 桌面入口：起本地服务 + 窗口层（macOS 系统 webview / Windows 内嵌 Chromium）
+finance_ranker.spec        PyInstaller 配置（含 py_mini_racer 原生库与静态资源、应用图标）
+tools/make_app_icons.py    由 favicon.svg 生成 assets/ 下的 .ico / .icns（纯 numpy，无图像库依赖）
+assets/                    生成好的应用图标（.ico / .icns / .png），随仓库提交
+windows/installer.iss      Inno Setup 安装包脚本（中文向导 + 应用图标）
 windows/build.ps1          Windows 本地一键构建（测试 → 打包 → 冒烟 → 安装包）
+windows/stage_chromium.ps1 下载官方 Chromium 快照并解压到 vendor/chromium（内嵌浏览器）
 .github/workflows/build.yml  CI：在 Windows / macOS 上各自出包
+tests/                     离线回归测试（引擎 / 数据源 / 板块 / 健康检查 / 页面渲染）
 ```
 
 ---
@@ -399,7 +404,7 @@ open dist/FinanceRanker.app          # macOS；Windows/Linux 用 dist/FinanceRan
 | 平台 | 窗口 | 是否内嵌浏览器 |
 |---|---|---|
 | macOS | pywebview → 系统 WKWebView | 否，产物约 150 MB |
-| Windows | **内嵌 Chromium**（Chrome for Testing 官方便携版），以 `--app=` 打开 | 是，产物约 400 MB |
+| Windows | **内嵌 Chromium**（官方 Chromium 连续快照 x64），以 `--app=` 打开 | 是，产物约 400 MB |
 
 Windows 之所以不再走 pywebview：它的 WinForms 后端必须经 **pythonnet** 去调 .NET，
 而打包成 exe 之后 pythonnet 加载不了 `Python.Runtime.dll`：
@@ -426,6 +431,26 @@ Windows 版现在不依赖 WebView2，也不依赖用户装过 Edge/Chrome。
 | 无控制台看不到日志 | 冻结时写 `launcher.log` 到数据目录 |
 | 端口被占用 | 优先 8848，占用则退到随机空闲端口，窗口指向实际端口 |
 | Windows 的窗口层 | 内嵌 Chromium 用 `--app=` 拉起；找不到或拉起失败则回退系统默认浏览器，**窗口层永远不会弄崩应用** |
+
+**应用图标来自网页端那个 SVG，不是 PyInstaller 的默认图标。**
+`app/web/static/favicon.svg`（也就是侧栏左上角那个品牌标记）是唯一的事实来源，
+`tools/make_app_icons.py` 把它栅格化成两个平台容器：
+
+```bash
+python tools/make_app_icons.py       # 重新生成 assets/（改过 SVG 后跑一次并提交）
+```
+
+| 文件 | 用途 |
+|---|---|
+| `assets/finance_ranker.ico` | Windows exe（16/24/32/48/64/128/256 七档，任务栏/Alt-Tab/资源管理器/安装包） |
+| `assets/finance_ranker.icns` | macOS `.app`（16–1024，PNG 压缩） |
+| `assets/finance_ranker-256.png` | 备用位图 |
+
+脚本不依赖任何图像库：`favicon.svg` 用到的构造（圆角矩形 + 线性渐变 + 折线描边 + 圆点）
+用 numpy 直接解析并超采样渲染，几何写死在 SVG 里、图标跟着 SVG 走。
+如果 SVG 以后用了这里不认识的构造，脚本会**报错退出**而不是悄悄产出一个旧图标。
+spec 里 `EXE(icon=...)` / `BUNDLE(icon=...)` 指向它，文件缺失时会自动重新生成，
+所以忘记提交 `assets/` 的干净检出也能打出正确图标。
 
 调试用参数：
 
@@ -470,10 +495,21 @@ git tag v0.1.0 && git push origin v0.1.0
 得到不需要登录、不过期的公开直链。发布用的是**被 tag 的那个 commit** 构建的产物，
 不会出现"源码和二进制对不上"。
 
-工作流在打包**之前**会跑全部测试、并把 Chrome for Testing（win64）下载到
+工作流在打包**之前**会跑全部测试、并把官方 **Chromium 快照**（win64）下载到
 `vendor/chromium/` 供打包内嵌；打包**之后**会先跑一次 `--selftest` 确认窗口层真的进了包，
 再做冒烟测试（启动冻结的应用 → 等它报出端口 → 校验 `/api/health` 与首页 200），
 所以"能下载"等于"能跑"。
+
+内嵌浏览器**不能用 Chrome for Testing**：那是 Google 的**带品牌**便携版 Chrome，每次启动都会
+挂一条 info bar（`IDS_CHROME_FOR_TESTING_INFOBAR`）：
+
+> Chrome 测试版 v`153.0.8010.52` 仅适用于自动测试。若要进行常规浏览，请使用可自动更新的标准版 Chrome。
+
+这是给最终用户看的"你用的浏览器不对"警告，而用户根本不该看到它。它**没有任何命令行开关能关掉**：
+`chrome.dll` 里只有一条机器级企业策略（`SOFTWARE\Policies\Google\Chrome for Testing` →
+`ChromeForTestingAllowed`），对便携应用来说既要求管理员又要求用户机器上写 HKLM。
+改用**无品牌的 Chromium 快照**，这条提示在构建里根本不存在，不需要提权、不需要策略，
+应用依然自包含。下载与校验见 `windows/stage_chromium.ps1`。
 
 ### 路线 B：在 Windows 上本地构建
 
@@ -567,6 +603,10 @@ API：`GET /api/providers`（读缓存）、`POST /api/providers/probe`（强制
    直接算 `市值(USD)/营收(TWD)`、`价格(USD)/EPS(TWD)` 是错的
    （ADR 还有 1:5 比例）。→ 增加 `ifrs-full` 支持 + **跨币种守卫**：
    保留原始申报值，剔除所有价格类倍数并明确标注原因。
+   **守卫是有意为之的取舍，不是缺陷**：没有引入汇率源之前不做换算，
+   代价是该标的的估值维度为空、进不了排名（详见本节第 15 条）。
+   要做完整的话需要两件事：TWD→USD 汇率，以及每份 ADR 对应的普通股数
+   （东财同时发 `摊薄每股收益-普通股` 与 `摊薄每股收益-ADS`，两者相除即可反推比例）。
 4. **币种探测误判**。早期实现扫描全部标签找非 USD 单位，结果把
    `Year` / `Store` 这类**单位键**当成币种，导致 Apple 被判定为“以 Year 申报”，
    所有估值指标被误清空。→ 只扫描货币类标签。
@@ -625,6 +665,106 @@ API：`GET /api/providers`（读缓存）、`POST /api/providers/probe`（强制
     → Windows 改为内嵌 Chromium 并用 `--app=` 拉起，**彻底移除 pythonnet**；
     同时新增 `--selftest`，在构建期就把「窗口层到底有没有真的进包」卡住，
     而不是只测一个永远不碰窗口的 `--no-window`。教训：冒烟测试必须覆盖用户真正会走的那条路。
+13. **单只标的明细页的「指标」列整列是空的**。五个维度表每一行都从
+    `metric.label` / `metric.en` 取名，而 `DIMENSIONS` 里的指标对象只声明了
+    `attr`（名字统一放在 i18n 词典的 `m.<attr>`）。`escapeHtml(undefined)` 返回空串，
+    于是**每只股票**的指标名都是空白，而旁边的本股值、同行中位数、名次、得分全部正常，
+    所以看起来像"只缺一列数据"。
+    → 改用同一文件里本就写好的 `labelFor` / `subLabelFor`；`subLabelFor`
+    此前是死代码，现在真正接上了双语副标题。
+    新增 `tests/test_company_render.py`：在 Node 里加载真实的 i18n/shell/company-view
+    三个脚本渲染一行，断言 21 个指标在中英文下都落在自己的单元格里，并断言
+    「值缺失的行仍显示 —」——防止把列填满的同时把缺失也填成假数据。
+14. **打包出来是 PyInstaller 默认图标**。spec 里 `EXE(...)` 没有 `icon=`，
+    macOS 的 `BUNDLE` 还写着 `icon=None`，安装包也没有 `SetupIconFile`。
+    → 见 §7.5：图标由 `favicon.svg` 生成并接入 spec 与 Inno Setup。
+15. **TSM（以及所有以本币申报的外国私人发行人）大量指标为空**，几个独立原因叠加：
+    - **单位选择与币种标签不一致**：`_flow_series` / `_instant_series` 默认
+      `unit="USD"`，而币种探测返回 TWD。TSM 的 IFRS 事实里 20-F 同时带了
+      **TWD 正表和 USD 便利换算**，于是金额全部取到了 USD 换算值，EPS 却因为
+      `unit=None` 取到了 `TWD/shares`——同一个 `Fundamentals` 里混了两种币种；
+      而且某个标签只要没有 USD 单位就会被**跳过**，等于币种反过来决定了标签选择。
+      → 先定币种，再把同一个单位贯穿所有金额字段（EPS 用 `CUR/shares`），
+      并在同时存在多种货币单位时写明用了哪一个。
+    - **`dei` 股本数读错了层级**：`_latest_dei_shares(facts)` 找的是 `facts["dei"]`，
+      真实结构是 `facts["facts"]["dei"]`，所以它**永远返回 None**，
+      `shares_basis` 也从未真正标出过 SEC DEI 口径。修好之后 multi-class 申报主体
+      同一期末的多个类别会相加（该接口不带维度成员），并与年度摊薄股数做
+      ±10% 一致性校验，避免只拿到一个类别就把市值砍半。
+    - **IFRS 标签表缺名**：TSM 的资本开支标成
+      `PurchaseOfPropertyPlantAndEquipmentClassifiedAsInvestingActivities`（不在表里），
+      折旧、摊销分开标（`DepreciationExpense` / `AmortisationExpense`），
+      SBC 用现金流量表的 `AdjustmentsForSharebasedPayments`，股数用
+      `WeightedAverageShares`。缺一个就少一片指标：没有 capex 就没有 FCF/P·FCF，
+      没有股数就没有市值。→ 补齐别名，并让「只标折旧」的标签补加上摊销。
+    - **akshare 回退路径几乎是空的**：它按精确名匹配 `ITEM_NAME`，但表里写的是
+      自己臆想的名字（`基本每股收益`、`稀释每股收益`、
+      `购建固定资产、无形资产和其他长期资产支付的现金`），东财实际发的是
+      `摊薄每股收益-普通股`、`营业成本`、`购买固定资产`、`短期债务` 等；还把三张表
+      合并成一个「名字 → 值」映射，而 `净利润` 在现金流量表里是**税前**口径
+      （TSM FY2025：2041.7B vs 利润表的 1695.1B），于是现金流量表的数覆盖了利润表的数，
+      净利率、ROE、现金转化全被污染。另外币种被硬编码成 `USD`。
+      → 每张表各取各的字段、按东财真实科目名匹配、币种取 `CURRENCY_ABBR`、
+      空单元格不再变成 NaN（NaN 不是合法 JSON，会直接打崩前端解析）。
+      顺带把「哪个 sheet 没取到」写进 `row.notes`，而不是静默少半张表。
+    修完 TSM 在 SEC 路径上从 11/21 覆盖升到 14/21；剩余空项是**跨币种守卫按设计剔除**的
+    （TWD 申报 vs USD ADR，且 ADR 还有 1:5 比例）。
+    另外 `MetricRow.filing_currency` 现在单独记录申报币种：明细页「以 TWD 申报」的徽章
+    过去判的是 `row.currency !== "USD"`，而 ADR 的交易币种**就是** USD，
+    所以这个徽章对自己要提醒的那一类标的一次都没亮过；现在改为比较
+    「申报币种 vs 交易币种」，并在「计算输入」区块上直接标出金额单位。
+16. **TSM 的台币财报 → 美元 + ADS 换算**（把第 15 条剩下的缺口补齐）。
+    换算需要两样东西，都不引入新的外部数据源：
+    - **汇率**：20-F 自带 US$ 便利换算，同一笔金额在申报里同时以 TWD 和 USD 出现，
+      两者相除**就是这家公司自己用的汇率**，逐年取多个科目的中位数即可
+      （实测 15 个大额科目互差在 1e-5 以内；TSM FY2024 = 32.79，正是其 20-F 声明的
+      「NT$32.79 = US$1.00」）。用的是申报里的口径，不需要维护任何汇率表。
+    - **ADS 比例**：这是存托协议的条款，不是 XBRL 事实，因此按发行人配置
+      （`FR_ADS_RATIOS`，默认 `TSM=5`，依据台积电 20-F：每份 ADS 代表 5 股普通股）。
+    两者齐备时，整个 `Fundamentals` 会被重述成交易币种 + ADS 口径（市值用的是
+    ADS 等价股数 51.9 亿，而不是 259.3 亿普通股），跨币种守卫自然不再触发。
+    缺失任一项时**不做部分换算**，仍按第 15 条留空并说明原因——宁可空着，不要错 5 倍。
+    换算说明与所用汇率（含逐年明细）都写进 `Fundamentals.fx_rates` 与 `row.notes`。
+
+    效果（同一网络、同一份缓存数据）：
+
+    | | 换算前 | 换算后 |
+    |---|---|---|
+    | 覆盖 | 11/21，`Partial filing data` | **20/21**，`Refreshed`（缺的那个是 beta，需要 SPY 基准） |
+    | 市值 | 空 | 2.2544e12（腾讯报价 2.2544e12，**相差 0.001%**，两条独立路径互证） |
+    | P/S · P/B · P/FCF · EV/EBITDA | 全空 | 25.5 · 17.4 · 85.0 · 36.2 |
+    | EPS | 44.67 TWD/普通股 | 6.81 USD/ADS（与券商口径一致） |
+
+    注意 akshare 兜底路径**没有**美元列，因此那里仍无法换算，`row.notes` 会直说
+    「需要 SEC 申报的美元数字」。这也是为什么 SEC 不通时该标的仍然进不了排名。
+    另外东财的币种来自另一个接口，该接口失败时**不会**再假定成 USD：
+    对已配置 ADS 比例的标的（即已知是 ADR）改为标记币种未确认，让守卫继续留空——
+    标错成 USD 会让守卫失效，反而把「美元价格 ÷ 台币每股」当成正常值发布出去。
+17. **「指标列还是空的」——修好了却看不见：浏览器缓存把上一版前端顶了回来。**
+    明细页指标名的修复确实在包里（服务端字节里能查到 `labelFor(metric.attr)`，渲染测试也过），
+    但用户的 `launcher.log` 给出了真凭实据：23:42 重新打包后，23:47 打开 `company.html` 时
+    **完全没有对 `/js/company-view.js` 发过任何请求**（同一时间其他脚本都重新取了 200），
+    而它在 23:31 曾以 `304` 取过一次——也就是说 Chromium 直接从磁盘缓存里拿了旧文件。
+    机制：`StaticFiles` 只发 `ETag`/`Last-Modified`、**不发 `Cache-Control`**（已核对
+    starlette 0.45.3 源码），浏览器于是按「启发式新鲜度 ≈ 文件年龄的 10%」自行判断，
+    而内嵌浏览器的 profile 是**持久化**的，于是近期取过的旧脚本会被直接复用。
+    → 双保险：① 静态资源改为 `Cache-Control: no-store, must-revalidate`
+    （+ `Pragma` / `Expires` 照顾 HTTP/1.0；本地磁盘读取成本可忽略，换来「重新打包必定生效」）；
+    ② 启动内嵌浏览器前清掉 profile 的 HTTP / Code / GPU 缓存目录——已经写进磁盘的旧副本，
+    光靠响应头是赶不走的。localStorage（语言、列显示偏好）不受影响，只清缓存。
+    日志里会写 `cleared N browser cache directories`，便于判断这一层到底有没有生效。
+18. **关了窗口进程却不退**（正是这次「文件被占用、无法覆盖构建」的原因）。
+    `SystemExit` 本身不够：`pipeline.build_rows` 用 `ThreadPoolExecutor` 并发抓取，
+    而 Python 在解释器退出时会 **join 这些 worker 线程**，于是在刷新进行中关掉窗口，
+    进程会继续活着——此时 uvicorn 的 daemon 线程已经停了，端口还在 accept 却永远不回应
+    （外部表现就是「服务死了但进程还在」），同时锁着包内文件，只能去任务管理器结束。
+    → 窗口层结束后用 `desktop._exit_now()` 确定性退出：先 `logging.shutdown()` 刷日志，
+    再 `os._exit()`。代价是**丢弃正在进行的那次抓取**——这正是「关窗口」的语义，
+    而且快照只在最后一步于 SQLite 事务内写入，不会留下半条记录。
+19. **Chromium 快照里带着 346 MB 的测试程序**。官方 `chrome-win.zip` 含
+    `interactive_ui_tests.exe`（Chrome 自己的交互测试宿主），`stage_chromium.ps1`
+    原本整包复制，会让安装体积凭空翻倍（Chrome for Testing 里没有它）。
+    → staging 后剪掉 `*_tests.exe` / `*unittests*`：809 MB → 463 MB。
 
 ---
 

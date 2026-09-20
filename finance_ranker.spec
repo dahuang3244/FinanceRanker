@@ -19,6 +19,27 @@ from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs, co
 
 ROOT = Path(SPECPATH).resolve()
 
+# ---- application icon ---------------------------------------------------- #
+# The window/executable icon is the app's own SVG mark (the same one the web UI
+# serves as favicon.svg and shows top-left), rasterised into the containers the
+# platforms need: .ico for Windows, .icns for macOS. Committing an icon the spec
+# only *reads* is not enough on its own -- a fresh checkout without the generated
+# assets would silently ship PyInstaller's default icon -- so it is regenerated
+# here when missing. `tools/make_app_icons.py` derives everything from the SVG,
+# so the packaged app can never drift from the in-app mark.
+ICON = None
+if sys.platform == "win32":
+    ICON = ROOT / "assets" / "finance_ranker.ico"
+elif sys.platform == "darwin":
+    ICON = ROOT / "assets" / "finance_ranker.icns"
+if ICON is not None and not ICON.is_file():
+    sys.path.insert(0, str(ROOT / "tools"))
+    from make_app_icons import generate_all
+
+    generate_all()
+    if not ICON.is_file():
+        raise SystemExit(f"ERROR: the app icon could not be generated at {ICON}")
+
 datas = [
     (str(ROOT / "app" / "web" / "static"), "app/web/static"),
 ]
@@ -34,9 +55,10 @@ datas += collect_data_files("py_mini_racer")
 
 # Windows ships its own Chromium, so the packaged app is self-contained: it
 # needs neither the machine's WebView2/Edge nor pythonnet. The build stages the
-# browser into vendor/chromium (see .github/workflows/build.yml and
-# windows/build.ps1); building without it still works and simply falls back to
-# whatever browser the system has.
+# browser into vendor/chromium (see windows/stage_chromium.ps1, called by
+# windows/build.ps1 and .github/workflows/build.yml); building without it is not
+# a supported path on Windows any more -- the CI selftest fails such a build with
+# exit code 2 rather than shipping a window layer that is not there.
 CHROMIUM_DIR = ROOT / "vendor" / "chromium"
 if sys.platform == "win32" and CHROMIUM_DIR.is_dir():
     datas.append((str(CHROMIUM_DIR), "chromium"))
@@ -176,6 +198,9 @@ exe = EXE(
     exclude_binaries=True,
     name="FinanceRanker",
     version=version_info,
+    # The brand mark, not PyInstaller's stock icon. `None` off Windows/macOS,
+    # where the icon argument is not used and would only warn.
+    icon=str(ICON) if ICON else None,
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -207,7 +232,9 @@ if sys.platform == "darwin":
     app = BUNDLE(
         coll,
         name="FinanceRanker.app",
-        icon=None,
+        # macOS reads the .icns rather than the executable's resources, so the
+        # Dock/Finder icon comes from here.
+        icon=str(ICON) if ICON else None,
         bundle_identifier="io.github.financeranker.app",
         info_plist={
             "CFBundleShortVersionString": "0.1.0",

@@ -546,6 +546,17 @@ const FRI18n = (() => {
     "co.fiscalEnd": ["财年结束", "Fiscal year end"],
     "co.fetched": ["抓取于", "fetched"],
     "co.currencyNonUsd": ["以 {ccy} 申报", "reports in {ccy}"],
+    "co.currencyNonUsd.hint": [
+      "财报以 {ccy} 申报，而股票以其它币种交易；涉及价格的倍数不参与计算。",
+      "The filings are in {ccy} while the stock trades in another currency, so price-based multiples are withheld.",
+    ],
+    "co.currencyUnknown": ["申报币种未确认", "reporting currency unconfirmed"],
+    "co.currencyUnknown.hint": [
+      "未能确认申报币种，涉及价格的倍数一律留空，而不是假设它是美元。",
+      "The filing currency could not be confirmed, so price-based multiples are withheld rather than assumed to be USD.",
+    ],
+    "co.calcInputs.currency": ["下列金额单位为 {ccy}", "Figures below are in {ccy}"],
+    "co.calcInputs.currencyUnknown": ["金额单位未确认", "Figure currency unconfirmed"],
     "co.first": ["已是第一", "Already first"],
     "co.last": ["已是最后", "Already last"],
     "co.prev": ["上一名 #{rank} {ticker}", "Previous #{rank} {ticker}"],

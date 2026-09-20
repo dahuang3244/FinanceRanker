@@ -177,6 +177,106 @@ def test_sina_probe_accepts_jsonp_payload():
         H.fetch = saved_fetch
 
 
+def test_static_assets_forbid_stale_caching():
+    """A rebuilt app must not be shadowed by a previously cached script.
+
+    Starlette sends ETag/Last-Modified but no Cache-Control, so Chromium fell back
+    to heuristic freshness and served the *previous* build's `company-view.js`
+    without revalidating -- that is why the company page's 指标 column stayed blank
+    after a rebuild although the fix was in the bundle (the server log showed no
+    request for that file at all, while other scripts were re-fetched with 200).
+    The static mount must therefore tell the browser not to store.
+    """
+    import inspect
+
+    from app.main import RevalidatedStaticFiles, app as fastapi_app
+
+    static_route = next(
+        r for r in fastapi_app.routes if getattr(r, "name", "") == "static"
+    )
+    assert isinstance(static_route.app, RevalidatedStaticFiles), (
+        "the static mount must be the revalidating subclass"
+    )
+    source = inspect.getsource(RevalidatedStaticFiles.file_response)
+    assert "no-store" in source, "no-store is what stops heuristic reuse"
+    assert "Pragma" in source and "Expires" in source, "cover HTTP/1.0 clients"
+
+
+def test_browser_cache_is_cleared_but_preferences_survive():
+    """The persistent profile's cache is cleared before Chromium is launched.
+
+    `no-store` stops *new* cache entries, but a copy written by an older build
+    would still be reused, so the launcher clears the profile's caches as well.
+    localStorage (language + ranking column preferences) must survive.
+    """
+    import shutil
+    from pathlib import Path
+
+    import desktop
+
+    # Built inside the repo's ignored scratch dir rather than the OS temp dir,
+    # because hardened environments can refuse writes there (this sandbox does).
+    profile = Path(__file__).resolve().parent.parent / "build" / "_cache_probe"
+    shutil.rmtree(profile, ignore_errors=True)
+    try:
+        for relative in ("Default/Cache", "Default/Code Cache", "Default/GPUCache"):
+            (profile / relative).mkdir(parents=True, exist_ok=True)
+        (profile / "Default/Local Storage").mkdir(parents=True, exist_ok=True)
+
+        desktop._reset_browser_cache(profile)
+
+        assert not (profile / "Default/Cache").exists(), "the HTTP cache must be cleared"
+        assert not (profile / "Default/Code Cache").exists(), "the code cache too"
+        assert (profile / "Default/Local Storage").is_dir(), (
+            "localStorage (language + column preferences) must survive"
+        )
+    finally:
+        shutil.rmtree(profile, ignore_errors=True)
+
+
+def test_closing_the_window_does_not_wait_for_a_running_refresh():
+    """Closing the window must quit even mid-refresh.
+
+    `SystemExit` is not enough: `pipeline.build_rows` fans out over a
+    `ThreadPoolExecutor`, and Python joins those worker threads at interpreter
+    shutdown. Closing the window during a refresh therefore left the process
+    running with no window, a server that accepted connections but never answered
+    them, and the bundle's files locked -- which is what blocked rebuilding into
+    the same directory. `desktop._exit_now` makes the quit immediate; prove it in
+    a child process that has a sleeping pool worker alive.
+    """
+    import subprocess
+    import sys
+    import time
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parent.parent
+    program = (
+        "import concurrent.futures as cf, sys, time\n"
+        f"sys.path.insert(0, {str(root)!r})\n"
+        "import desktop\n"
+        "pool = cf.ThreadPoolExecutor(max_workers=1)\n"
+        "pool.submit(time.sleep, 30)   # a refresh still in flight\n"
+        "time.sleep(0.3)               # let the worker actually start\n"
+        "desktop._exit_now(0)\n"
+        "print('NOT REACHED')\n"
+    )
+    started = time.time()
+    proc = subprocess.run(
+        [sys.executable, "-c", program],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=25,
+    )
+    elapsed = time.time() - started
+    assert proc.returncode == 0, proc.stderr[-300:]
+    assert "NOT REACHED" not in proc.stdout, "execution continued past _exit_now"
+    assert elapsed < 10, (
+        f"took {elapsed:.1f}s to exit -- it waited for the pool worker instead"
+    )
+
+
 # --------------------------------------------------------------------------- #
 def _main() -> int:
     tests = [

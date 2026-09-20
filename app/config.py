@@ -87,6 +87,22 @@ class Settings(BaseSettings):
     yahoo_mode: str = "auto"
     enable_akshare: bool = True
 
+    # ---------- ADR conversion ----------
+    # Common shares represented by one American Depositary Share, per issuer:
+    # "TICKER=RATIO,TICKER=RATIO". A foreign private issuer's ADR trades in USD
+    # while its statements are filed in the home currency, so *both* an FX rate
+    # and this ratio are needed before a USD price can be divided into the
+    # filing's figures.
+    #
+    # TSM = 5: TSMC's 20-F states that each ADS represents five common shares
+    # (and its own statements show diluted EPS per ordinary share and per ADS in
+    # that 1:5 relationship). Ratios are documentary facts of the deposit
+    # agreement, not XBRL facts, so they cannot be derived from companyfacts --
+    # hence this table, which is the one thing here that has to be curated.
+    # An issuer whose ordinary shares themselves trade in the US belongs here
+    # with a ratio of 1.
+    ads_ratios: str = "TSM=5"
+
     # ---------- cache ----------
     cache_ttl_price: int = 6 * 3600        # daily bars change slowly
     cache_ttl_quote: int = 5 * 60          # intraday quote
@@ -116,6 +132,20 @@ class Settings(BaseSettings):
     @property
     def ticker_list(self) -> list[str]:
         return [t.strip().upper() for t in self.default_tickers.split(",") if t.strip()]
+
+    def ads_ratio_map(self) -> dict[str, float]:
+        """`ads_ratios` parsed into {TICKER: common shares per ADS}."""
+        out: dict[str, float] = {}
+        for entry in self.ads_ratios.split(","):
+            symbol, _, raw = entry.partition("=")
+            symbol = symbol.strip().upper()
+            try:
+                ratio = float(raw)
+            except ValueError:
+                continue
+            if symbol and ratio > 0:
+                out[symbol] = ratio
+        return out
 
     def proxies(self) -> dict[str, str] | None:
         """Resolve the proxy mapping for `requests`."""

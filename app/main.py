@@ -34,6 +34,33 @@ STATIC_DIR = Path(__file__).parent / "web" / "static"
 if not STATIC_DIR.is_dir():
     STATIC_DIR = BUNDLE_DIR / "app" / "web" / "static"
 
+
+class RevalidatedStaticFiles(StaticFiles):
+    """Static assets that a browser can never serve stale.
+
+    Starlette's StaticFiles sends `ETag` and `Last-Modified` but no
+    `Cache-Control` at all. A browser therefore falls back to *heuristic*
+    freshness (roughly 10% of the file's age) and may reuse a script without ever
+    asking the server, which is how a rebuilt app kept running the previous
+    build's `company-view.js`: with a persistent browser profile, the company
+    page's 指标 column stayed blank although the new bundle contained the fix.
+    `launcher.log` showed the smoking gun -- after the rebuild, other scripts
+    were re-fetched (`200`) while `company-view.js` produced no request line at
+    all, i.e. it was served from cache without revalidation.
+
+    These files come off local disk, so re-fetching costs microseconds and buys
+    determinism: a rebuild always takes effect. `no-store` avoids even
+    revalidating, which also keeps the persistent profile from accumulating
+    copies of a previous build.
+    """
+
+    def file_response(self, *args, **kwargs) -> Response:
+        response = super().file_response(*args, **kwargs)
+        response.headers["Cache-Control"] = "no-store, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+        return response
+
 app = FastAPI(
     title="FinanceRanker",
     description="Free public-data technology peer ranker (SEC XBRL + akshare + public prices)",
@@ -557,4 +584,8 @@ async def sector_build(payload: dict | None = None) -> dict:
 # --------------------------------------------------------------------------- #
 # static UI
 # --------------------------------------------------------------------------- #
-app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=True), name="static")
+app.mount(
+    "/",
+    RevalidatedStaticFiles(directory=str(STATIC_DIR), html=True),
+    name="static",
+)

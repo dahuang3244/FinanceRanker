@@ -20,8 +20,8 @@ dist/
 
 *.spec.bak
 
-# Vendored browser staged by the build (see .github/workflows/build.yml and
-# windows/build.ps1); ~350 MB, never committed.
+# Vendored browser staged by the build (see windows/stage_chromium.ps1, called by
+# windows/build.ps1 and .github/workflows/build.yml); ~350 MB, never committed.
 vendor/
 
 # OS / editor

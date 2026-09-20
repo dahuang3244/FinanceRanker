@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 import os
+import shutil
 import socket
 import subprocess
 import sys
@@ -21,6 +22,7 @@ import threading
 import time
 import webbrowser
 from pathlib import Path
+from typing import NoReturn
 
 log = logging.getLogger("launcher")
 
@@ -123,6 +125,44 @@ def _find_bundled_browser() -> Path | None:
     return None
 
 
+def _reset_browser_cache(profile: Path) -> None:
+    """Drop the bundled browser's HTTP cache before opening it.
+
+    The profile is deliberately persistent (so the window keeps its size and the
+    app keeps its localStorage preferences), but a persistent Chromium profile
+    also keeps a disk cache, and it answers heuristically-fresh entries without
+    asking the server. That is how a *rebuilt* app kept rendering the previous
+    build's front-end: `launcher.log` recorded no request at all for
+    `js/company-view.js` after the rebuild, while other scripts were re-fetched,
+    so a fix that was definitely in the bundle never reached the page.
+
+    The server now sends `Cache-Control: no-store`, which stops new entries from
+    being written -- but a copy cached by an older build would still be reused,
+    so the cache is cleared here as well. Nothing of value lives in it: every
+    asset is read from local disk in microseconds, while the profile's cookies,
+    localStorage and window state are untouched.
+    """
+    cleared = 0
+    for relative in (
+        "Default/Cache",
+        "Default/Code Cache",
+        "Default/GPUCache",
+        "Default/DawnGraphiteCache",
+        "Default/DawnWebGPUCache",
+    ):
+        target = profile / relative
+        if target.is_dir():
+            try:
+                shutil.rmtree(target)
+                cleared += 1
+            except OSError:  # pragma: no cover - best effort, never fatal
+                log.debug("could not clear the browser cache at %s", target)
+    if cleared:
+        # Logged on purpose: "the fix is in the bundle but the page still shows
+        # the old behaviour" is diagnosed fastest from this line being absent.
+        log.info("cleared %d browser cache director%s", cleared, "y" if cleared == 1 else "ies")
+
+
 def _open_browser_window(url: str) -> bool:
     """Show `url` in the bundled Chromium as a chromeless app window.
 
@@ -139,6 +179,7 @@ def _open_browser_window(url: str) -> bool:
 
     profile = Path(DATA_DIR) / "browser-profile"
     profile.mkdir(parents=True, exist_ok=True)
+    _reset_browser_cache(profile)
 
     args = [
         str(browser),
@@ -169,6 +210,28 @@ def _serve_forever() -> int:
             time.sleep(1)
     except KeyboardInterrupt:
         return 0
+
+
+def _exit_now(code: int) -> NoReturn:
+    """Quit for real, without waiting for a refresh that is still running.
+
+    `SystemExit` on its own is *not* enough, and this cost a user a locked build
+    directory: `pipeline.build_rows` fans out over a `ThreadPoolExecutor`, and
+    Python joins those worker threads at interpreter shutdown. So closing the
+    window mid-refresh left the process alive with no window at all -- and with
+    the server's event loop already stopped, its port still accepted connections
+    that were never answered, while the workers kept fetching. From the outside
+    the app looked closed but kept running, kept its files locked (so rebuilding
+    into the same directory failed with "the file is in use") and could only be
+    killed from Task Manager.
+
+    A run is only written at the end, inside SQLite's transaction, so an abrupt
+    exit cannot leave a half-written snapshot behind -- the in-flight fetch is
+    simply dropped, which is what closing the window means.
+    """
+    log.info("exiting (code %s)", code)
+    logging.shutdown()
+    os._exit(code)
 
 
 def main() -> int:
@@ -239,7 +302,9 @@ def main() -> int:
     if sys.platform == "win32" and "--browser" not in sys.argv:
         try:
             if _open_browser_window(url):
-                return 0
+                # The window *is* the app; see `_exit_now` for why returning here
+                # is not enough.
+                _exit_now(0)
             log.warning("this build has no bundled browser; using the system one")
         except Exception:  # noqa: BLE001 - the window must never kill the app
             log.exception("the bundled browser failed; using the system one")
@@ -262,7 +327,7 @@ def main() -> int:
         log.exception("native window failed; opening in the default browser")
         webbrowser.open(url)
         return _serve_forever()
-    return 0
+    _exit_now(0)
 
 
 def _webview_available() -> bool:

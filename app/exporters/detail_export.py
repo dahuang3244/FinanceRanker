@@ -127,6 +127,10 @@ def _detail_sections(rows: list[MetricRow], row: MetricRow) -> list[tuple[str, l
         ["Ticker", row.ticker],
         ["Company", row.company or ""],
         ["Currency", row.currency],
+        # The currency the filing-derived figures are in; differs from `Currency`
+        # exactly when a foreign filing could not be restated, which is also why
+        # the price-based multiples are blank.
+        ["Fundamentals currency", row.filing_currency or row.currency],
         ["Fiscal year end", row.fiscal_end.isoformat() if row.fiscal_end else ""],
         ["Peer group size", str(len(rows))],
         ["Overall score (1-10)", "" if row.score_overall is None else f"{row.score_overall:.2f}"],

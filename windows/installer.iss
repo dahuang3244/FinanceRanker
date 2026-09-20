@@ -15,6 +15,11 @@
 #define MyAppExeName "FinanceRanker.exe"
 ; Relative to this .iss file, so the script works from any checkout location.
 #define DistDir "..\dist\FinanceRanker"
+; The app's own mark (see tools/make_app_icons.py), used for the installer's own
+; icon in Explorer and the Add/Remove Programs entry. Anchored on SourcePath so
+; it resolves no matter which directory ISCC was invoked from, and guarded
+; because a missing icon must not abort the whole compile.
+#define AppIcon SourcePath + "\..\assets\finance_ranker.ico"
 
 [Setup]
 AppId={{7C4E1B2A-9D3F-4A61-B0E7-2F5A8C1D4E93}
@@ -40,6 +45,11 @@ WizardStyle=modern
 PrivilegesRequired=lowest
 PrivilegesRequiredOverridesAllowed=dialog
 UninstallDisplayIcon={app}\{#MyAppExeName}
+#if FileExists(AppIcon)
+; Without this the installer shows Inno Setup's default icon in Explorer, the
+; taskbar and "Apps & features" even though the app itself is branded.
+SetupIconFile={#AppIcon}
+#endif
 
 [Languages]
 ; Chinese first: this is a Chinese-language tool.

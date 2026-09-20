@@ -139,6 +139,10 @@ def test_cross_currency_guard_withholds_price_multiples():
     assert row.revenue_fy0 == 331_839_000_000
     assert row.status.startswith("Partial filing data")
     assert "TWD" in row.notes and "USD" in row.notes
+    # The row keeps the traded currency for prices, but records what the filings
+    # are quoted in so the UI can label the filing-derived figures.
+    assert row.currency == "USD"
+    assert row.filing_currency == "TWD"
 
 
 def test_same_currency_is_unaffected():
@@ -148,6 +152,7 @@ def test_same_currency_is_unaffected():
     assert row.market_cap is not None
     assert row.price_to_sales is not None
     assert "differs" not in row.notes
+    assert row.filing_currency == row.currency == "USD"
 
 
 # --------------------------------------------------------------------------- #
