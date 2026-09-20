@@ -50,16 +50,19 @@
           </div>
         </div>
 
-        <!-- view switch + column toggles -->
+        <!-- view switch + weight strategy + column toggles -->
         <div class="glass" style="padding:14px 20px;overflow:visible">
           <div class="row" style="justify-content:space-between">
             <div class="seg" id="viewSeg" role="group" aria-label="视图"></div>
+            <div class="seg seg--strategy" id="strategySeg" role="group"
+                 aria-label="weight strategy" title=""></div>
             <div class="scale-legend" id="rankLegend"></div>
             <details class="colpanel">
               <summary aria-haspopup="true" data-i18n="rk.columns">显示列</summary>
               <div class="coltoggles" id="colToggles" popover="auto"></div>
             </details>
           </div>
+          <p class="faint" id="strategyBlurb" style="margin:8px 0 0;font-size:11.5px"></p>
         </div>
 
         <!-- stale snapshot notice: blanks caused by an old snapshot, not by a

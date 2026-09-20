@@ -229,6 +229,10 @@ class MetricRow(BaseModel):
     interest_cover: float | None = None
     net_debt_fy0: float | None = None
     ebitda_fy0: float | None = None
+    # Provenance for substituted measures: which CAGR window was actually used,
+    # and which trend figures are changes rather than percentages.
+    cagr_basis: str = ""
+    trend_basis: str = ""
 
     # per-share bridge
     gaap_eps: float | None = None
@@ -340,6 +344,10 @@ class MetricRow(BaseModel):
     score_cash: float | None = None
     score_valuation: float | None = None
     score_market: float | None = None
+    # Market splits into the two questions it answers, so a screen can show
+    # whether a rank came from performance or from risk.
+    score_market_performance: float | None = None
+    score_market_risk: float | None = None
     score_overall: float | None = None
     data_coverage: int = 0
     coverage_pct: float | None = None

@@ -186,6 +186,42 @@ METRIC_LABELS: dict[str, str] = {
 }
 
 
+# Metrics whose value may be a *substitute* rather than the metric itself, and
+# therefore must not join the percentile population. A loss-making company has
+# no EPS CAGR, so the engine reports the annualised absolute change instead —
+# a useful number, but rendering -19.6 next to peers' +23% and ranking it would
+# compare two different units. Such a row is displayed and exported, and left
+# unscored in that one metric.
+#
+# `basis_fields` names the provenance string; `basis_prefix` is how the engine
+# labels that metric inside it. Matching on the prefix rather than the display
+# label keeps this independent of presentation wording ("GAAP EPS CAGR 5Y" is
+# recorded as "EPS CAGR:").
+BASIS_GATED_METRICS: dict[str, dict[str, str]] = {
+    "revenue_cagr_5y": {"field": "cagr_basis", "prefix": "revenue cagr"},
+    "eps_cagr_5y": {"field": "cagr_basis", "prefix": "eps cagr"},
+    "eps_growth_yoy": {"field": "trend_basis", "prefix": "eps:"},
+    "net_income_growth_yoy": {"field": "trend_basis", "prefix": "net income:"},
+    "gross_profit_growth_yoy": {"field": "trend_basis", "prefix": "gross profit:"},
+    "fcf_growth_yoy": {"field": "trend_basis", "prefix": "fcf:"},
+}
+
+
+def is_substituted(row: "MetricRow", attr: str) -> bool:
+    """Whether this row's value for `attr` is a disclosed substitute measure."""
+    rule = BASIS_GATED_METRICS.get(attr)
+    if not rule:
+        return False
+    description = (getattr(row, rule["field"], "") or "").lower()
+    return bool(description) and rule["prefix"] in description
+
+
+def basis_fields_for(attr: str) -> list[str]:
+    """Which provenance field flags `attr` as substituted, for the catalogue."""
+    rule = BASIS_GATED_METRICS.get(attr)
+    return [rule["field"]] if rule else []
+
+
 def reference_attrs() -> set[str]:
     return {attr for attr, _, _, _ in REFERENCE_METRICS}
 
@@ -201,6 +237,9 @@ def metric_catalog() -> list[dict]:
     """
     # `order` is the position within each group, so a consumer can simply sort by
     # (not scored, order) without knowing how many metrics are in the other group.
+    # `basis_fields` tells a consumer which provenance string marks this metric's
+    # value as a substitute, so the presentation layer never reimplements that
+    # rule and drifts from the scoring engine.
     out: list[dict] = []
     for order, (attr, component, higher) in enumerate(METRICS):
         out.append({
@@ -208,6 +247,7 @@ def metric_catalog() -> list[dict]:
             "kind": METRIC_PRESENTATION.get(attr, "num"),
             "label": METRIC_LABELS.get(attr, attr),
             "scored": True, "order": order, "note": None,
+            "basis_fields": basis_fields_for(attr),
         })
     for order, (attr, component, higher, why) in enumerate(REFERENCE_METRICS):
         out.append({
@@ -215,6 +255,7 @@ def metric_catalog() -> list[dict]:
             "kind": METRIC_PRESENTATION.get(attr, "num"),
             "label": METRIC_LABELS.get(attr, attr),
             "scored": False, "order": order, "note": why,
+            "basis_fields": basis_fields_for(attr),
         })
     return out
 
@@ -259,6 +300,143 @@ COMPONENT_FIELDS = {
     "cash": "score_cash",
     "valuation": "score_valuation",
     "market": "score_market",
+}
+
+# --------------------------------------------------------------------------- #
+# weights
+# --------------------------------------------------------------------------- #
+# Component weights per strategy. A single fixed blend answers one question
+# ("what is cheap and growing?") and quietly buries the others; a peer screen is
+# read by people asking different questions, so the blend is a named choice
+# rather than a constant.
+#
+# Every profile sums to 1.0, and the *metrics inside* each component are
+# untouched — only the emphasis between components moves. That keeps the
+# percentile scores comparable across profiles instead of recomputing them.
+STRATEGY_PRESETS: dict[str, dict] = {
+    "balanced": {
+        "label": {"zh": "均衡", "en": "Balanced"},
+        "blurb": {
+            "zh": "成长、盈利、现金、估值、市场均衡加权。适合作为默认的同行对比口径。",
+            "en": "Even weighting across growth, profitability, cash, valuation and market.",
+        },
+        "weights": {"growth": 0.20, "profitability": 0.15, "cash": 0.20,
+                    "valuation": 0.25, "market": 0.20},
+    },
+    "momentum": {
+        "label": {"zh": "动量", "en": "Momentum"},
+        "blurb": {
+            "zh": "市场维度占 45%：更看重相对 SPY 的超额回报与风险调整后表现，"
+                  "基本面仍占一半以上。适合回答「现在哪只更强」。",
+            "en": "Market carries 45%: benchmark-relative return and risk-adjusted "
+                  "performance dominate, with fundamentals still over half.",
+        },
+        "weights": {"growth": 0.20, "profitability": 0.10, "cash": 0.05,
+                    "valuation": 0.20, "market": 0.45},
+    },
+    "quality": {
+        "label": {"zh": "质量", "en": "Quality"},
+        "blurb": {
+            "zh": "盈利与现金占 60%：更看重利润率、资本回报与现金转化，"
+                  "对短期涨跌和估值倍数最不敏感。",
+            "en": "Profitability and cash carry 60%: margins, returns on capital and "
+                  "cash conversion matter most; short-term price moves matter least.",
+        },
+        "weights": {"growth": 0.10, "profitability": 0.30, "cash": 0.30,
+                    "valuation": 0.20, "market": 0.10},
+    },
+    "value": {
+        "label": {"zh": "估值", "en": "Value"},
+        "blurb": {
+            "zh": "估值占 40%：更看重买入价格，代价是容易落入价值陷阱，"
+                  "因此仍保留 20% 市场与 15% 现金权重。",
+            "en": "Valuation carries 40%: entry price dominates, at the cost of "
+                  "value-trap risk, so market (20%) and cash (15%) still count.",
+        },
+        "weights": {"growth": 0.15, "profitability": 0.10, "cash": 0.15,
+                    "valuation": 0.40, "market": 0.20},
+    },
+}
+
+DEFAULT_STRATEGY = "balanced"
+
+
+def _configured_weights() -> dict[str, float]:
+    """The `FR_W_*` component weights from configuration.
+
+    These were the only weights before named presets existed. They are kept as a
+    first-class `custom` profile rather than ignored, because silently overriding
+    a weight someone set in `.env` would leave them reading a ranking they think
+    they configured.
+    """
+    from app.config import settings
+
+    return {
+        "growth": float(settings.w_growth),
+        "profitability": float(settings.w_profitability),
+        "cash": float(settings.w_cash),
+        "valuation": float(settings.w_valuation),
+        "market": float(settings.w_market),
+    }
+
+
+def all_presets() -> dict[str, dict]:
+    """Every selectable profile, including the configuration-derived one."""
+    presets = dict(STRATEGY_PRESETS)
+    configured = _configured_weights()
+    balanced = STRATEGY_PRESETS[DEFAULT_STRATEGY]["weights"]
+    differs = any(abs(configured[k] - balanced[k]) > 1e-9 for k in balanced)
+    presets["custom"] = {
+        "label": {"zh": "自定义（.env）", "en": "Custom (.env)"},
+        "blurb": {
+            "zh": "来自 FR_W_* 配置的权重。修改 .env 后重启即可生效。",
+            "en": "Weights from the FR_W_* settings; edit .env and restart to change them.",
+        },
+        "weights": configured,
+        # Surfaced so the UI can hint that .env and the balanced preset differ.
+        "differs_from_default": differs,
+    }
+    return presets
+
+
+def default_strategy() -> str:
+    """`custom` when `.env` specifies a blend other than the balanced preset."""
+    presets = all_presets()
+    if presets["custom"].get("differs_from_default"):
+        return "custom"
+    return DEFAULT_STRATEGY
+
+
+def preset_weights(strategy: str | None) -> dict[str, float]:
+    """Component weights for a named strategy, falling back to the default."""
+    presets = all_presets()
+    key = (strategy or "").strip().lower()
+    if key not in presets:
+        key = default_strategy()
+    return dict(presets[key]["weights"])
+
+
+# How the 11 market metrics combine into the two questions the market block
+# actually asks. Without this the component is a flat average, so three return
+# windows outvote the risk measures and "went up a lot" beats "went up a lot
+# without the drawdown".
+MARKET_SUBWEIGHTS: dict[str, dict[str, float]] = {
+    "performance": {
+        "return_3m": 0.20, "return_6m": 0.20, "return_1y": 0.10,
+        "excess_return_3m": 0.25, "excess_return_6m": 0.20, "excess_return_1y": 0.05,
+    },
+    "risk": {
+        "sharpe_ratio": 0.30, "sortino_ratio": 0.20, "volatility": 0.20,
+        "beta_1y": 0.15, "max_drawdown_1y": 0.10, "drawdown_52w": 0.05,
+    },
+}
+# Performance leads because the screen is about what a stock did and how it
+# compared; risk adjusts that verdict rather than replacing it.
+MARKET_BLEND: dict[str, float] = {"performance": 0.60, "risk": 0.40}
+
+SUBSCORE_FIELDS = {
+    "market_performance": "score_market_performance",
+    "market_risk": "score_market_risk",
 }
 
 # Minimum observations required before a component is scored at all.
@@ -322,17 +500,37 @@ def _percentile_score(value: float, population: list[float], higher_is_better: b
     return round(score, 4)
 
 
-def score_peers(rows: list[MetricRow]) -> list[MetricRow]:
-    """Assign z-scores, component scores and the weighted overall score in place."""
+def score_peers(
+    rows: list[MetricRow],
+    *,
+    strategy: str | None = None,
+    custom_weights: dict[str, float] | None = None,
+) -> list[MetricRow]:
+    """Assign z-scores, component scores and the weighted overall score in place.
+
+    `strategy` selects a named weight preset; `custom_weights` overrides
+    individual components on top of it. Percentile scores never depend on
+    either — only the final weighted combination does — so switching strategy
+    re-ranks the same evidence rather than recomputing it.
+    """
     if not rows:
         return rows
 
+    # Preset first, then explicit overrides. Any component left out keeps its
+    # preset weight, so a partial custom blend cannot raise mid-scoring.
+    weights = preset_weights(strategy)
+    for component, value in (custom_weights or {}).items():
+        if component in COMPONENT_FIELDS and value is not None:
+            weights[component] = float(value)
+
     for attr, component, higher_better in METRICS:
-        # Negative earnings / equity ratios are not cheap valuations.
+        # Negative earnings / equity ratios are not cheap valuations, and a
+        # disclosed substitute measure is not the metric being compared.
         population = [
             getattr(r, attr) for r in rows
             if getattr(r, attr) is not None
             and (component != "valuation" or getattr(r, attr) > 0)
+            and not is_substituted(r, attr)
         ]
         if len(population) < 2:
             continue
@@ -346,19 +544,48 @@ def score_peers(rows: list[MetricRow]) -> list[MetricRow]:
             value = getattr(row, attr, None)
             if value is None or (component == "valuation" and value <= 0):
                 continue
+            if is_substituted(row, attr):
+                continue
             setattr(row, z_field, _percentile_score(value, population, higher_better))
 
     for row in rows:
         component_scores: dict[str, float] = {}
+
+        # The market component is blended from its two sub-questions first, so
+        # the return windows and the risk measures cannot outvote each other by
+        # sheer count.
+        for sub, subweights in MARKET_SUBWEIGHTS.items():
+            members: list[tuple[float, float]] = []
+            for attr, metric_weight in subweights.items():
+                z = getattr(row, Z_FIELDS[attr], None)
+                if z is not None:
+                    members.append((z, metric_weight))
+            if members:
+                total = sum(w for _, w in members)
+                value = sum(z * w for z, w in members) / total
+                setattr(row, SUBSCORE_FIELDS[f"market_{sub}"], round(value, 4))
+
         for component, field in COMPONENT_FIELDS.items():
-            members = [
-                getattr(row, Z_FIELDS[attr])
-                for attr, comp, _ in METRICS
-                if comp == component and getattr(row, Z_FIELDS[attr], None) is not None
-            ]
-            if len(members) < MIN_PER_COMPONENT[component]:
-                continue
-            score = sum(members) / len(members)
+            if component == "market":
+                parts = [
+                    (getattr(row, SUBSCORE_FIELDS[f"market_{sub}"], None),
+                     MARKET_BLEND[sub])
+                    for sub in MARKET_SUBWEIGHTS
+                ]
+                parts = [(v, w) for v, w in parts if v is not None]
+                if len(parts) < MIN_PER_COMPONENT["market"]:
+                    continue
+                total = sum(w for _, w in parts)
+                score = sum(v * w for v, w in parts) / total
+            else:
+                members = [
+                    getattr(row, Z_FIELDS[attr])
+                    for attr, comp, _ in METRICS
+                    if comp == component and getattr(row, Z_FIELDS[attr], None) is not None
+                ]
+                if len(members) < MIN_PER_COMPONENT[component]:
+                    continue
+                score = sum(members) / len(members)
             setattr(row, field, round(score, 4))
             component_scores[component] = score
 
@@ -368,13 +595,6 @@ def score_peers(rows: list[MetricRow]) -> list[MetricRow]:
             row.rank_eligible = False
             continue
 
-        weights = {
-            "growth": settings.w_growth,
-            "profitability": settings.w_profitability,
-            "cash": settings.w_cash,
-            "valuation": settings.w_valuation,
-            "market": settings.w_market,
-        }
         total_weight = sum(weights[c] for c in component_scores)
         if total_weight <= 0:
             row.rank_eligible = False

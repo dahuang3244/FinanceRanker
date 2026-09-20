@@ -22,7 +22,16 @@ const FRCompany = (() => {
     { key: "profitability", i18n: "dim.profitability", score: "score_profitability", weight: 0.15, icon: "coins" },
     { key: "cash", i18n: "dim.cash", score: "score_cash", weight: 0.20, icon: "layers" },
     { key: "valuation", i18n: "dim.valuation", score: "score_valuation", weight: 0.25, icon: "shield" },
-    { key: "market", i18n: "dim.market", score: "score_market", weight: 0.20, icon: "zap" },
+    {
+      key: "market", i18n: "dim.market", score: "score_market", weight: 0.20, icon: "zap",
+      // The market block answers two questions; showing them separately is what
+      // makes "ranked well because it went up" vs "because it was steady"
+      // visible instead of hidden inside one blended number.
+      subs: [
+        { field: "score_market_performance", i18n: "dim.market.performance", weight: 0.60 },
+        { field: "score_market_risk", i18n: "dim.market.risk", weight: 0.40 },
+      ],
+    },
   ];
 
   /** Populated from the backend catalog on first mount. */
@@ -141,6 +150,26 @@ const FRCompany = (() => {
     return CATALOG ? CATALOG.filter((m) => m.scored).length : 0;
   }
 
+  /**
+   * Whether this row's value is a disclosed substitute for the named metric.
+   * Mirrors `app.engine.scoring.is_substituted`: the engine records the
+   * substitution in a basis string that begins with the metric's own name.
+   */
+  /**
+   * Whether this row's value is a disclosed substitute for the named metric.
+   * The catalogue states which provenance string carries that flag, so this
+   * never reimplements the engine's rule — it only reads it.
+   */
+  function substitutionNote(metric, row) {
+    if (!row || !metric.basis_fields || !metric.basis_fields.length) return "";
+    const token = (labelFor(metric.attr) || metric.attr).split(" ")[0].toLowerCase();
+    for (const field of metric.basis_fields) {
+      const description = row[field] || "";
+      if (token && description.toLowerCase().includes(token)) return description;
+    }
+    return "";
+  }
+
   /* ------------------------------------------------------------- formatting */
   function fmt(value, kind, digits = 1) {
     if (value === null || value === undefined || Number.isNaN(value)) return DASH;
@@ -227,11 +256,16 @@ const FRCompany = (() => {
 
     const present = pool.filter((r) => r[metric.attr] !== null && r[metric.attr] !== undefined).length;
     const refTitle = metric.note ? `${t("co.referenceOnly")} — ${metric.note}` : t("co.referenceOnly");
+    // A value that is not a plain percentage (a sign flip, or a shortened CAGR
+    // window) is flagged here, at the number itself, because a reader comparing
+    // peers will otherwise read -19.6 as a growth rate.
+    const basis = value === null || value === undefined ? "" : substitutionNote(metric, row);
     const cells = {
       metric: `<td class="mlabel">
         <b>${escapeHtml(labelFor(metric.attr))}${
           metric.scored ? "" : `<span class="reftag" title="${escapeHtml(refTitle)}">${t("co.refTag")}</span>`}</b>
         <em>${escapeHtml(subLabelFor(metric.attr))}</em>
+        ${basis ? `<i class="basistag" title="${escapeHtml(basis)}">${t("co.substituted")}</i>` : ""}
       </td>`,
       value: `<td class="right mnum">
         <span class="mono ${delta === null ? "" : deltaBetter ? "up" : "down"}">${fmt(value, metric.kind)}</span>
@@ -287,6 +321,13 @@ const FRCompany = (() => {
     const metrics = metricsFor(dim);
     const scored = metrics.filter((m) => m.scored);
     const present = scored.filter((m) => row[m.attr] !== null && row[m.attr] !== undefined).length;
+    const subs = (dim.subs || []).map((s) => {
+      const v = row[s.field];
+      if (v === null || v === undefined) return "";
+      return `<span class="subscore tone-${tone(v)}" title="${escapeHtml(t("co.subscoreHint"))}">
+        <em>${escapeHtml(t(s.i18n))}<i>${Math.round(s.weight * 100)}%</i></em>
+        <b>${num(v, 2)}</b></span>`;
+    }).join("");
     return `
       <section class="glass dimblock" data-dim="${dim.key}">
         <header class="dimhead">
@@ -298,6 +339,7 @@ const FRCompany = (() => {
           <div class="dimmeta">
             <span class="badge">${t("common.weight")} ${(dim.weight * 100).toFixed(0)}%</span>
             <span class="badge">${present}/${scored.length} ${t("common.itemsWithValue")}</span>
+            ${subs}
           </div>
           <div class="dimscore tone-${tone(score)}">
             <b>${num(score, 2)}</b><span>/ 10</span>

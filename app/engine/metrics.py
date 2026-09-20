@@ -45,6 +45,39 @@ def growth(current: float | None, prior: float | None) -> float | None:
     return current / prior - 1.0
 
 
+def trend(
+    current: float | None,
+    prior: float | None,
+    *,
+    scale: float | None = None,
+) -> tuple[float | None, str]:
+    """Year-over-year change that stays meaningful when a sign flips.
+
+    Percentage growth is undefined when either endpoint is non-positive: a
+    company moving from -$105m to +$300m free cash flow has not "grown -286%",
+    and one moving from +$26m profit to a -$6.9bn loss has no percentage at all.
+    Returning nothing there is how a loss-making company — precisely the kind a
+    comparison screen exists to evaluate — ends up with a column of blanks.
+
+    So the sign decides the measure:
+      * both ends positive -> percentage change (the normal case)
+      * a sign flip or negative base -> absolute change, and when `scale` is
+        given, that change as a fraction of the scale (revenue, typically) so
+        the figure stays comparable across peers of different sizes.
+
+    Returns (value, basis) where `basis` is "" for a clean percentage and a
+    human-readable explanation otherwise, so the substitution is never silent.
+    """
+    if current is None or prior is None:
+        return None, ""
+    if prior > 0 and current > 0:
+        return current / prior - 1.0, ""
+    change = current - prior
+    if scale is not None and scale > 0:
+        return change / scale, "change as % of revenue (sign change or negative base)"
+    return change, "absolute change (sign change or negative base)"
+
+
 def cagr(current: float | None, base: float | None, periods: int) -> float | None:
     if current is None or base is None or periods <= 0 or current <= 0 or base <= 0:
         return None
@@ -360,18 +393,36 @@ def _fundamental_block(row: MetricRow, fund: Fundamentals) -> None:
 
     # Growth: prefer like-for-like period pairs from the same series.
     row.revenue_growth_yoy = _series_growth(fund.revenue, 1)
-    row.revenue_cagr_5y = _series_cagr(fund.revenue, 5)
-    row.revenue_cagr_3y = _series_cagr(fund.revenue, 3)
-    row.eps_cagr_5y = _series_cagr(fund.eps_diluted, 5)
-    row.eps_growth_yoy = _series_growth(fund.eps_diluted, 1)
-    row.net_income_growth_yoy = _series_growth(fund.net_income, 1)
-    row.gross_profit_growth_yoy = _series_growth(fund.gross_profit, 1)
+    row.revenue_cagr_5y, window, rev_basis = _series_cagr_adaptive(fund.revenue, 5)
+    row.revenue_cagr_3y, _, _ = _series_cagr_adaptive(fund.revenue, 3)
+    row.eps_cagr_5y, _, eps_cagr_basis = _series_cagr_adaptive(fund.eps_diluted, 5)
+    cagr_notes = [
+        f"Revenue CAGR: {rev_basis}" if rev_basis else "",
+        f"EPS CAGR: {eps_cagr_basis}" if eps_cagr_basis else "",
+    ]
+    row.cagr_basis = "; ".join(n for n in cagr_notes if n)
+
+    # Sign-aware trends: a loss-making company still has a direction, and
+    # percentage change off a negative base is not one.
+    row.eps_growth_yoy, eps_basis = _series_trend(fund.eps_diluted, 1)
+    row.net_income_growth_yoy, ni_basis = _series_trend(fund.net_income, 1, scale=revenue)
+    row.gross_profit_growth_yoy, gp_basis = _series_trend(fund.gross_profit, 1)
     if row.gross_profit_growth_yoy is None and gross is not None and cost is not None:
         # Derive gross profit per year when the filer tags only a cost line, so
         # its growth is still measurable.
         prior_gross = _prior_derived_gross(fund, gross)
         if prior_gross:
             row.gross_profit_growth_yoy = growth(gross, prior_gross)
+
+    bases = [
+        note for note in (
+            f"EPS: {eps_basis}" if eps_basis else "",
+            f"Net income: {ni_basis}" if ni_basis else "",
+            f"Gross profit: {gp_basis}" if gp_basis else "",
+        ) if note
+    ]
+    if bases:
+        row.trend_basis = "; ".join(bases)
 
     # Operating leverage: how much faster operating income moves than revenue.
     # A ratio near 1 means costs scaled with sales; above 1 means margin
@@ -397,7 +448,9 @@ def _fundamental_block(row: MetricRow, fund: Fundamentals) -> None:
     row.capex_intensity = safe_div(abs(capex) if capex is not None else None, revenue)
     # Year-over-year FCF growth, recomputed per year so it does not depend on a
     # single capex figure.
-    row.fcf_growth_yoy = _fcf_growth(fund, anchor)
+    row.fcf_growth_yoy, fcf_basis = _fcf_growth(fund, anchor, scale=revenue)
+    if fcf_basis:
+        row.trend_basis = (row.trend_basis + "; " if row.trend_basis else "") + f"FCF: {fcf_basis}"
     row.cash_to_assets = safe_div(cash, assets)
     sbc = _series_value(fund.sbc, anchor)
     row.sbc_pct_revenue = safe_div(sbc, revenue)
@@ -472,6 +525,49 @@ def _series_cagr(series, periods: int) -> float | None:
     return cagr(series.points[0][1], _series_at_offset(series, periods), periods)
 
 
+def _series_cagr_adaptive(series, periods: int) -> tuple[float | None, int | None, str]:
+    """CAGR over `periods` years, or the best available substitute.
+
+    Two situations have no CAGR but do have a direction worth reporting:
+
+    * **a short series** — a company that listed three years ago has a good
+      shorter trend, and in a peer screen a blank is not neutral: it drops the
+      metric from that company's score while every peer keeps theirs.
+    * **a sign flip** — compounding from +$1.75 to -$92.96 has no growth rate,
+      and reporting nothing hides the single most important fact about the
+      company.
+
+    Returns (value, window_years, basis). `basis` is "" for a clean CAGR and
+    explains any substitution otherwise, so a 3-year figure is never presented
+    as a 5-year one.
+    """
+    if series is None or len(series.points) < 2:
+        return None, None, ""
+    current = series.points[0][1]
+    # Prefer the requested window; shorten only when it is genuinely absent.
+    for window in range(min(periods, len(series.points) - 1), 1, -1):
+        base = _series_at_offset(series, window)
+        if base is None:
+            continue
+        value = cagr(current, base, window)
+        if value is not None:
+            basis = "" if window == periods else f"{window}-year window (fewer annual facts available)"
+            return value, window, basis
+        # Endpoints straddle zero: report the annualised absolute change.
+        if current <= 0 or base <= 0:
+            return (current - base) / window, window, (
+                f"annualised absolute change over {window}y (sign flip, so no growth rate exists)"
+            )
+    return None, None, ""
+
+
+def _series_trend(series, periods: int, *, scale: float | None = None) -> tuple[float | None, str]:
+    """Sign-aware year-over-year change for one series."""
+    if series is None or len(series.points) < 2:
+        return None, ""
+    return trend(series.points[0][1], _series_at_offset(series, periods), scale=scale)
+
+
 def _prior_derived_gross(fund: Fundamentals, current_gross: float | None) -> float | None:
     """Prior-year gross profit when the filer tags only a cost line.
 
@@ -491,25 +587,26 @@ def _prior_derived_gross(fund: Fundamentals, current_gross: float | None) -> flo
     return None
 
 
-def _fcf_growth(fund: Fundamentals, anchor: date | None) -> float | None:
+def _fcf_growth(fund: Fundamentals, anchor: date | None, scale: float | None = None) -> tuple[float | None, str]:
     """Free-cash-flow growth, computed per year from that year's own capex.
 
     Comparing the current FCF against a prior figure taken from a different capex
     basis would mix a real change with a substitution, so both legs are built
     from the same filings.
+
+    A negative prior-year FCF is common (a single heavy capex year) and is
+    exactly when the direction matters most, so a sign flip is reported as the
+    change rather than withheld.
     """
     current_ocf = _series_value(fund.operating_cash_flow, anchor)
     current_capex = _series_value(fund.capex, anchor)
     prior_ocf = _series_at_offset(fund.operating_cash_flow, 1)
     prior_capex = _series_at_offset(fund.capex, 1)
     if None in (current_ocf, current_capex, prior_ocf, prior_capex):
-        return None
+        return None, ""
     current = current_ocf - abs(current_capex)
     prior = prior_ocf - abs(prior_capex)
-    if prior <= 0:
-        # Growth off a non-positive base is not a percentage, it is a sign flip.
-        return None
-    return current / prior - 1.0
+    return trend(current, prior, scale=scale)
 
 
 def _total_debt(fund: Fundamentals, anchor: date | None) -> float | None:

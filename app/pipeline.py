@@ -143,6 +143,7 @@ def build_rows(
     benchmark: PriceHistory | None = None,
     max_workers: int | None = None,
     basis: PriceBasis | None = None,
+    strategy: str | None = None,
 ) -> tuple[list[MetricRow], dict[str, str]]:
     """Fetch, compute and score a peer set."""
     progress = progress or _noop
@@ -189,6 +190,6 @@ def build_rows(
                 errors[symbol] = error or "unknown error"
                 progress(symbol, f"failed: {error}", done, total)
 
-    scoring.score_peers(rows)
+    scoring.score_peers(rows, strategy=strategy)
     rows.sort(key=lambda r: (r.rank is None, r.rank or 999, r.ticker))
     return rows, errors

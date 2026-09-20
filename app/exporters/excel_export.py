@@ -395,16 +395,20 @@ def _sheet_data_cache(wb: Workbook, rows: list[MetricRow]) -> None:
 
 
 def _sheet_scoring(wb: Workbook, rows: list[MetricRow]) -> None:
+    from app.engine.scoring import default_strategy, preset_weights
+
     ws = wb.create_sheet("Scoring")
     ws["A2"] = "Cross-sectional percentile scoring (1–10)"
     ws["A2"].font = TITLE_FONT
-    ws["A4"] = "Weights"
-    ws["B4"] = settings.w_growth
-    ws["C4"] = settings.w_profitability
-    ws["D4"] = settings.w_cash
-    ws["E4"] = settings.w_valuation
-    ws["F4"] = settings.w_market
-    for col in range(2, 7):
+    # The blend that actually produced these scores, and which profile it is —
+    # a weight row that disagrees with the numbers beside it is worse than none.
+    active = default_strategy()
+    weights = preset_weights(active)
+    ws["A4"] = f"Weights ({active})"
+    order = ("growth", "profitability", "cash", "valuation", "market")
+    for offset, component in enumerate(order):
+        ws.cell(4, 2 + offset, weights[component])
+    for col in range(2, 2 + len(order)):
         ws.cell(4, col).number_format = PCT
 
     ws.append([])

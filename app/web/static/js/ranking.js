@@ -11,7 +11,7 @@
 
   // Size of the scoring universe, used to label the coverage meter honestly.
   // Kept in step with `app/engine/scoring.py::METRICS`.
-  const METRIC_COUNT = 29;
+  const METRIC_COUNT = 32;
 
   const VIEWS = [
     { key: "overall", i18n: "rk.view.overall", col: "score_overall" },
@@ -175,6 +175,8 @@
     rows: [],
     stale: null,
     view: "overall",
+    strategy: null,          // resolved from GET /api/strategies on first load
+    strategies: [],
     sortKey: "rank",
     sortDir: 1,
     q: "",
@@ -199,6 +201,7 @@
     try {
       const raw = JSON.parse(localStorage.getItem(PREF_KEY) || "{}");
       if (raw.view && VIEWS.some((v) => v.key === raw.view)) state.view = raw.view;
+      if (typeof raw.strategy === "string" && raw.strategy) state.strategy = raw.strategy;
       if (Array.isArray(raw.hidden) && raw.hidden.length) {
         // only keep keys that still exist, and never hide everything
         const valid = raw.hidden.filter((k) => COL_BY_KEY[k]);
@@ -210,9 +213,81 @@
   function savePrefs() {
     try {
       localStorage.setItem(PREF_KEY, JSON.stringify({
-        view: state.view, hidden: [...state.hidden],
+        view: state.view, hidden: [...state.hidden], strategy: state.strategy,
       }));
     } catch { /* storage may be unavailable */ }
+  }
+
+  /* ---------------------------------------------------------------- strategy */
+  /* The component blend is a stated choice, not a constant buried in config.
+     Changing it re-ranks the same percentile scores, so the numbers a reader
+     already saw do not change — only their weighting does. */
+  async function ensureStrategies() {
+    if (state.strategies.length) return;
+    try {
+      const data = await api.strategies();
+      state.strategies = data.strategies || [];
+      const keys = state.strategies.map((s) => s.key);
+      if (!state.strategy || !keys.includes(state.strategy)) state.strategy = data.default;
+    } catch {
+      // Without the endpoint the ranking still loads under the server default.
+      state.strategies = [];
+    }
+  }
+
+  function activeStrategy() {
+    return state.strategies.find((s) => s.key === state.strategy) || null;
+  }
+
+  function renderStrategySeg() {
+    const host = $("#strategySeg");
+    if (!host) return;
+    if (!state.strategies.length) {
+      host.innerHTML = "";
+      const blurb = $("#strategyBlurb");
+      if (blurb) blurb.textContent = "";
+      return;
+    }
+    host.innerHTML = state.strategies.map((s) =>
+      `<button type="button" data-strategy="${escapeHtml(s.key)}"
+        aria-pressed="${state.strategy === s.key}"
+        title="${escapeHtml(weightsSummary(s))}">${escapeHtml(strategyLabel(s))}</button>`).join("");
+    $$("#strategySeg button").forEach((b) =>
+      b.addEventListener("click", async () => {
+        if (state.strategy === b.dataset.strategy) return;
+        state.strategy = b.dataset.strategy;
+        savePrefs();
+        renderStrategySeg();
+        await reload();
+      }));
+    const active = activeStrategy();
+    const blurb = $("#strategyBlurb");
+    if (blurb && active) {
+      blurb.innerHTML = `${escapeHtml(strategyBlurb(active))} <span class="mono faint">${
+        escapeHtml(weightsSummary(active))}</span>`;
+    }
+  }
+
+  /** Label in the current language, from the {zh, en} pair the API returns. */
+  function strategyLang() {
+    return (typeof FRI18n !== "undefined" && FRI18n.current && FRI18n.current()) || "zh";
+  }
+
+  function strategyLabel(s) {
+    const pair = s.label || {};
+    const lang = strategyLang();
+    return pair[lang] || pair.en || pair.zh || s.key;
+  }
+
+  function strategyBlurb(s) {
+    const pair = s.blurb || {};
+    const lang = strategyLang();
+    return pair[lang] || pair.en || pair.zh || "";
+  }
+
+  function weightsSummary(s) {
+    const w = s.weights || {};
+    return Object.keys(w).map((k) => `${t(`dim.${k}`)} ${Math.round(w[k] * 100)}%`).join(" · ");
   }
 
   /* ------------------------------------------------------------------ render */
@@ -566,10 +641,13 @@
         job_id: qs.get("job_id") || undefined,
         run_id: qs.get("run_id") || undefined,
         eligible_only: state.eligibleOnly || undefined,
+        strategy: state.strategy || undefined,
       });
       state.rows = data.rows || [];
       state.errors = Object.entries(data.errors || {});
       state.stale = data.staleness || null;
+      if (data.strategy) state.strategy = data.strategy;
+      state.weights = data.weights || null;
       state.sourceKey = qs.get("run_id")
         ? ["rk.source.run", { id: qs.get("run_id") }]
         : qs.get("job_id") ? ["rk.source.job", null] : ["common.latestSnapshot", null];
@@ -592,6 +670,7 @@
 
   window.pageInit = async function pageInit() {
     loadPrefs();
+    await ensureStrategies();
 
     $("#searchIcon").innerHTML = icon("search");
     $("#toRefresh").innerHTML = `${solid("play")}<span data-i18n="action.go.refresh">${t("action.go.refresh")}</span>`;
@@ -601,6 +680,7 @@
     $("#copyBtn").innerHTML = `${icon("copy")}<span data-i18n="action.copy.table">${t("action.copy.table")}</span>`;
 
     renderViewSeg();
+    renderStrategySeg();
     renderColToggles();
 
     const { panel: colPanel, list: colList } = colParts();
@@ -646,6 +726,7 @@
 
     document.addEventListener("fr:lang", () => {
       renderViewSeg();
+      renderStrategySeg();
       renderColToggles();
       renderStale(state.stale);
       render();

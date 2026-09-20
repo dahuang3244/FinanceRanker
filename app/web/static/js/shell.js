@@ -89,6 +89,8 @@ const FR = (() => {
     run: (id) => api.get(`/api/runs/${encodeURIComponent(id)}`),
     dropRun: (id) => api.del(`/api/runs/${encodeURIComponent(id)}`),
     ranking: (opts = {}) => api.get("/api/ranking", opts),
+    // Named weight presets the ranking can be re-scored under.
+    strategies: () => api.get("/api/strategies"),
     // The metric catalogue: which metrics exist, their component and whether
     // the backend scores them. Drives the company detail blocks.
     metrics: () => api.get("/api/metrics"),

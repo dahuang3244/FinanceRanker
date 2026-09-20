@@ -161,6 +161,8 @@ async def health() -> dict:
 
 @app.get("/api/config")
 async def get_config() -> dict:
+    from app.engine.scoring import default_strategy
+
     return {
         "default_tickers": settings.ticker_list,
         "max_concurrency": settings.max_concurrency,
@@ -171,6 +173,10 @@ async def get_config() -> dict:
             "valuation": settings.w_valuation,
             "market": settings.w_market,
         },
+        # When these differ from the balanced preset they become the default
+        # blend, so a configured `FR_W_*` set is honoured rather than ignored.
+        "default_strategy": default_strategy(),
+        "risk_free_rate": settings.risk_free_rate,
     }
 
 
@@ -264,13 +270,44 @@ async def job_stream(job_id: str, request: Request) -> StreamingResponse:
 # --------------------------------------------------------------------------- #
 # API — ranking
 # --------------------------------------------------------------------------- #
+@app.get("/api/strategies")
+async def strategies() -> dict:
+    """The selectable weight profiles for re-scoring a ranking.
+
+    Exposed so the UI never hardcodes a weight again: the blend is a stated
+    choice, and changing it re-ranks the same percentile scores rather than
+    recomputing the evidence. Includes a `custom` profile built from the
+    `FR_W_*` settings so a configured blend is selectable rather than ignored.
+    """
+    from app.engine.scoring import all_presets, default_strategy
+
+    presets = all_presets()
+    return {
+        "default": default_strategy(),
+        "strategies": [
+            {"key": key, "label": preset["label"], "blurb": preset["blurb"],
+             "weights": preset["weights"],
+             "differs_from_default": bool(preset.get("differs_from_default"))}
+            for key, preset in presets.items()
+        ],
+    }
+
+
 @app.get("/api/ranking")
 async def ranking(
     job_id: str | None = None,
     run_id: str | None = None,
     eligible_only: bool = False,
+    strategy: str | None = None,
 ) -> dict:
     rows, errors = await _resolve_rows(job_id, run_id)
+    # Re-score on the requested blend: percentile scores are independent of the
+    # weights, so this re-ranks the stored evidence instead of refetching it.
+    from app.engine.scoring import default_strategy, preset_weights, score_peers
+
+    active = (strategy or default_strategy()).strip().lower()
+    if rows:
+        score_peers(rows, strategy=active)
     if eligible_only:
         rows = [r for r in rows if r.rank_eligible]
     return {
@@ -278,6 +315,8 @@ async def ranking(
         "errors": errors,
         "staleness": _staleness(rows),
         "metrics_version": _metrics_version(),
+        "strategy": active,
+        "weights": preset_weights(active),
         "rows": [r.model_dump(mode="json") for r in rows],
     }
 

@@ -514,6 +514,16 @@ body {
   box-shadow: var(--sh-sm), var(--glint);
 }
 
+/* Weight-strategy selector. Deliberately quieter than the view switch: it
+   changes the blend behind the same evidence, not which evidence is shown. */
+.seg--strategy { border-style: dashed; }
+.seg--strategy button { font-size: 11.5px; padding: 5px 10px; }
+.seg--strategy button[aria-pressed="true"] {
+  background: var(--accent-soft);
+  color: var(--accent-deep);
+  border: 1px solid var(--accent-line);
+}
+
 /* ------------------------------------------------------------------ fields */
 .field { display: flex; flex-direction: column; gap: 7px; min-width: 0; }
 .field > label {

@@ -402,14 +402,52 @@ def test_lower_volatility_and_beta_score_better():
         for attr, _, _ in scoring.METRICS:
             setattr(row, attr, 5.0)
         rows.append(row)
-    rows[0].volatility, rows[1].volatility = 0.15, 0.60
-    rows[0].beta_1y, rows[1].beta_1y = 0.6, 1.9
-    rows[0].sharpe_ratio, rows[1].sharpe_ratio = 1.4, 0.3
-    scoring.score_peers(rows)
     calm, wild = rows
+    # The market component blends performance and risk, so both halves need to
+    # separate the two names for the component score to exist at all.
+    calm.return_3m, wild.return_3m = 0.08, -0.02
+    calm.excess_return_3m, wild.excess_return_3m = 0.05, -0.06
+    calm.excess_return_6m, wild.excess_return_6m = 0.04, -0.05
+    calm.volatility, wild.volatility = 0.15, 0.60
+    calm.beta_1y, wild.beta_1y = 0.6, 1.9
+    calm.sharpe_ratio, wild.sharpe_ratio = 1.4, 0.3
+    scoring.score_peers(rows)
     assert calm.z_volatility > wild.z_volatility
     assert calm.z_beta_1y > wild.z_beta_1y
+    assert calm.score_market_performance > wild.score_market_performance
+    assert calm.score_market_risk > wild.score_market_risk
     assert calm.score_market > wild.score_market
+
+
+def test_market_aggregate_needs_both_performance_and_risk():
+    """A market score must not be decided by returns alone, nor risk alone."""
+    def build(strip: str | None):
+        rows = [MetricRow(ticker=t) for t in ("A", "B")]
+        for i, row in enumerate(rows):
+            for attr, _, _ in scoring.METRICS:
+                setattr(row, attr, float(i + 1))
+        if strip:
+            # Drop the raw values, not the z-scores: they are recomputed.
+            for attr in scoring.MARKET_SUBWEIGHTS[strip]:
+                for row in rows:
+                    setattr(row, attr, None)
+        scoring.score_peers(rows)
+        return rows
+
+    full = build(None)
+    assert full[0].score_market_performance is not None
+    assert full[0].score_market_risk is not None
+    assert full[0].score_market is not None
+
+    returns_only = build("risk")
+    assert returns_only[0].score_market_performance is not None
+    assert returns_only[0].score_market_risk is None
+    assert returns_only[0].score_market is None, "returns alone must not yield a market score"
+
+    risk_only = build("performance")
+    assert risk_only[0].score_market_performance is None
+    assert risk_only[0].score_market_risk is not None
+    assert risk_only[0].score_market is None, "risk alone must not yield a market score"
 
 
 if __name__ == "__main__":

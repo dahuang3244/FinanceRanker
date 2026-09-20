@@ -273,6 +273,37 @@
 }
 .dimtable td.mbar.is-ref { text-align: center; color: var(--faint); }
 
+/* A value that is a disclosed substitute (sign flip, shortened CAGR window)
+   must not be read as the ordinary metric. The tag sits on the number's row. */
+.basistag {
+  display: block;
+  margin-top: 3px;
+  color: var(--soft);
+  font-size: 9.5px;
+  font-style: normal;
+  letter-spacing: 0.03em;
+}
+
+/* Sub-scores inside the market header: performance and risk, so a strong rank
+   cannot hide whether it came from returns or from steadiness. */
+.subscore {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  margin-left: 6px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--hair);
+  background: var(--well);
+  font-size: 11px;
+}
+.subscore em { font-style: normal; color: var(--muted); }
+.subscore em i { margin-left: 3px; font-style: normal; opacity: 0.6; font-size: 9.5px; }
+.subscore b { font-family: var(--mono); font-size: 12px; }
+.subscore.tone-good b { color: var(--good); }
+.subscore.tone-mid b { color: var(--mid); }
+.subscore.tone-low b { color: var(--low); }
+
 /* Column rhythm comes from the <colgroup>: metric label / 本股 / 同行中位 /
    差值 / 池内名次 / 得分条 / 得分. Narrow screens drop the last columns so the
    remaining ones keep their full width instead of overlapping. */

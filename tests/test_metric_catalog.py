@@ -107,6 +107,92 @@ def test_frontend_does_not_carry_its_own_metric_list():
     assert not offenders, f"company-view.js still lists metrics locally: {offenders}"
     assert "api.metrics()" in src, "company-view.js must fetch the metric catalogue"
     assert "higher_is_better" in src, "company-view.js must read the catalogue's direction flag"
+    # The substitution rule must be read from the catalogue, not reimplemented.
+    assert "basis_fields" in src, "company-view.js must read basis_fields from the catalogue"
+    assert "cagr_basis" not in src, "company-view.js must not hardcode provenance field names"
+
+
+def test_catalogue_publishes_basis_fields_for_gated_metrics():
+    """Every metric the engine may substitute must say which field flags it."""
+    catalog = {e["attr"]: e for e in _catalog()}
+    for attr, rule in scoring.BASIS_GATED_METRICS.items():
+        assert attr in catalog, f"{attr} is basis-gated but not catalogued"
+        assert catalog[attr]["basis_fields"] == [rule["field"]], attr
+    assert catalog["gross_margin"]["basis_fields"] == []
+
+
+def test_substituted_values_are_withheld_from_scoring_but_kept_on_the_row():
+    """A substitute is displayed and skipped, never ranked against real values.
+
+    A loss-making company has no EPS CAGR, so the engine reports the annualised
+    absolute change instead. That is a different unit from every peer's
+    percentage, so including it would corrupt the percentile — but dropping the
+    value entirely would hide the most important fact about the company.
+    """
+    rows = []
+    for i, ticker in enumerate(("LOSS", "GROW1", "GROW2")):
+        row = MetricRow(ticker=ticker)
+        for attr, _, _ in scoring.METRICS:
+            setattr(row, attr, float(i + 1) * 0.05)
+        rows.append(row)
+    rows[0].eps_cagr_5y = -19.6
+    rows[0].cagr_basis = "EPS CAGR: annualised absolute change over 5y (sign flip)"
+    rows[1].eps_cagr_5y = 0.18
+    rows[2].eps_cagr_5y = 0.22
+    scoring.score_peers(rows)
+
+    assert scoring.is_substituted(rows[0], "eps_cagr_5y") is True
+    assert scoring.is_substituted(rows[1], "eps_cagr_5y") is False
+    # Displayed, but not scored.
+    z_field = scoring.Z_FIELDS["eps_cagr_5y"]
+    assert rows[0].eps_cagr_5y == -19.6
+    assert getattr(rows[0], z_field) is None
+    assert getattr(rows[1], z_field) is not None
+
+
+def test_strategy_presets_are_complete_and_reweight_without_rescoring():
+    """Every preset covers all components, sums to 1, and switching it re-ranks
+    the same percentile scores rather than recomputing the evidence."""
+    from app.engine.scoring import COMPONENT_FIELDS, STRATEGY_PRESETS, preset_weights
+
+    for key, preset in STRATEGY_PRESETS.items():
+        weights = preset["weights"]
+        assert set(weights) == set(COMPONENT_FIELDS), key
+        assert abs(sum(weights.values()) - 1.0) < 1e-9, key
+        assert preset["label"]["zh"] and preset["label"]["en"], key
+        assert preset["blurb"]["zh"] and preset["blurb"]["en"], key
+    assert preset_weights("nonsense") == preset_weights(None), "unknown strategy must fall back"
+
+    def build():
+        rows = []
+        for i, ticker in enumerate(("AAA", "BBB", "CCC")):
+            row = MetricRow(ticker=ticker)
+            for attr, _, _ in scoring.METRICS:
+                setattr(row, attr, float(i + 1))
+            rows.append(row)
+        return rows
+
+    balanced = build()
+    scoring.score_peers(balanced, strategy="balanced")
+    momentum = build()
+    scoring.score_peers(momentum, strategy="momentum")
+    for a, b in zip(balanced, momentum):
+        assert a.z_growth_yoy == b.z_growth_yoy
+        assert a.z_sharpe == b.z_sharpe
+    assert balanced[0].score_overall != momentum[0].score_overall
+
+
+def test_market_component_is_a_performance_risk_blend():
+    from app.engine.scoring import MARKET_BLEND, MARKET_SUBWEIGHTS
+
+    scored = {attr for attr, comp, _ in scoring.METRICS if comp == "market"}
+    covered = set(MARKET_SUBWEIGHTS["performance"]) | set(MARKET_SUBWEIGHTS["risk"])
+    assert covered == scored, f"market sub-weights miss: {scored - covered}"
+    assert abs(sum(MARKET_BLEND.values()) - 1.0) < 1e-9
+    for sub, weights in MARKET_SUBWEIGHTS.items():
+        assert abs(sum(weights.values()) - 1.0) < 1e-9, sub
+    # Performance must lead, or the component is a risk screen in disguise.
+    assert MARKET_BLEND["performance"] > MARKET_BLEND["risk"]
 
 
 def test_frontend_labels_exist_for_every_catalogued_metric():
@@ -142,6 +228,32 @@ def test_detail_export_never_leaves_a_score_cell_blank_and_silent():
     for line in text.splitlines():
         if line.startswith("ROA,") or line.startswith("Gross margin,"):
             assert "not scored" not in line, line
+
+
+def test_configured_env_weights_become_a_selectable_preset():
+    """A blend set in `.env` must stay selectable, not be silently ignored."""
+    from unittest.mock import patch
+
+    from app.config import settings
+    from app.engine.scoring import all_presets, default_strategy, preset_weights
+
+    # `.env` at its defaults matches the balanced preset, so nothing is overridden.
+    assert default_strategy() == "balanced"
+    assert all_presets()["custom"]["differs_from_default"] is False
+    assert preset_weights("custom") == preset_weights("balanced")
+
+    # A genuinely different configured blend becomes the default, so a reader
+    # sees the ranking they configured rather than one that quietly ignored it.
+    with patch.object(settings, "w_market", 0.60), \
+         patch.object(settings, "w_valuation", 0.05):
+        assert default_strategy() == "custom"
+        assert all_presets()["custom"]["differs_from_default"] is True
+        assert preset_weights("custom")["market"] == 0.60
+        # And the named presets are unaffected.
+        assert preset_weights("balanced")["market"] == 0.20
+
+    # An unknown strategy resolves to whatever the default is.
+    assert preset_weights("nope") == preset_weights(default_strategy())
 
 
 if __name__ == "__main__":
