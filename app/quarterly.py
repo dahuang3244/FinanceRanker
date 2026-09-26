@@ -45,6 +45,12 @@ QUARTERS = 4
 MIN_QUARTER_DAYS = 80
 MAX_QUARTER_DAYS = 100
 
+# The shortest span that may be differenced to recover a quarter. A single quarter
+# must be excluded from that pool: subtracting one quarter from the next is
+# meaningless, and doing it produced a Meta Q2 of 7.13 (Q2 minus Q1 instead of
+# Q2 alone). Six months is the shortest genuinely cumulative period.
+CUMULATIVE_MIN_DAYS = 170
+
 # Income-statement facts, by tag. The first tag that carries a quarterly series
 # wins, so a filer that stopped tagging one is still readable through another.
 INCOME_TAGS: dict[str, tuple[str, ...]] = {
@@ -208,11 +214,13 @@ def _is_quarter(row: dict) -> bool:
     return MIN_QUARTER_DAYS <= span <= MAX_QUARTER_DAYS
 
 
-def _quarter_series(facts: dict) -> list[tuple[str, str]]:
-    """(start, end) for the most recent quarters, newest last.
+def _quarter_series(facts: dict) -> tuple[list[tuple[str, str]], list[str]]:
+    """The quarters, oldest last, each marked "stated" or "derived".
 
     Driven by the EPS series, because a quarter with no EPS is not a quarter this
-    module can show a per-share figure for.
+    module can show a per-share figure for. The marker matters: a stated quarter has
+    its own three-month fact and can be read directly, while a derived one exists
+    only as the difference of two cumulative periods and must be read from there.
     """
     for tag in EPS_TAGS:
         node = facts.get(tag)
@@ -220,13 +228,232 @@ def _quarter_series(facts: dict) -> list[tuple[str, str]]:
             continue
         rows = [r for r in _unit_series(node, ("USD/shares",)) if _is_quarter(r)]
         if rows:
-            seen: list[tuple[str, str]] = []
+            raw: list[tuple[str, str]] = []
             for row in rows:
                 pair = (row["start"], row["end"])
-                if pair not in seen:
-                    seen.append(pair)
-            return seen[-QUARTERS * 2:]
-    return []
+                if pair not in raw:
+                    raw.append(pair)
+            raw.sort(key=lambda pair: pair[1])
+
+            # One period per quarter, and the right variant of it. XBRL carries the
+            # same quarter more than once with a shifted start — Meta holds both
+            # 2011-06-30→09-30 (92 days) and 2011-07-01→09-30 (91 days) — and the
+            # shifted one is the *longer* span, so preferring the longest span keeps
+            # exactly the wrong variant. That variant reaches back a day too far, so
+            # it appears to overlap the preceding quarter and the derivation then
+            # refuses to fill a genuinely missing quarter.
+            #
+            # The right choice is the period that begins immediately after the
+            # previous quarter ends: a quarter starts where its predecessor stopped.
+            # Taking the latest start per end date does that, because the shifted
+            # variant always starts earliest.
+            best: dict[str, tuple[str, str]] = {}
+            for pair in raw:
+                try:
+                    days = (date.fromisoformat(pair[1])
+                            - date.fromisoformat(pair[0])).days
+                except ValueError:
+                    continue
+                if not (MIN_QUARTER_DAYS <= days <= MAX_QUARTER_DAYS):
+                    continue
+                current = best.get(pair[1])
+                if current is None or pair[0] > current[0]:
+                    best[pair[1]] = pair
+            clean: list[tuple[str, str]] = sorted(best.values(), key=lambda p: p[1])
+
+            # Add the quarters the filer only tagged cumulatively, so the series is
+            # actually consecutive instead of breaking at every year boundary. A
+            # derived pair that ends where a stated quarter already ends is skipped:
+            # the stated one is the better record of that period.
+            # Add the quarters the filer only tagged cumulatively, so the series is
+            # actually consecutive instead of breaking at every year boundary.
+            #
+            # The derivation is given only the *stated* quarters as "known". A
+            # cumulative span may end on the same day a quarter does — Meta's
+            # nine-month figure ends 2025-09-30 exactly as its third quarter does —
+            # so passing those spans in would make the derivation believe the fourth
+            # quarter already existed and skip it, leaving the quarter blank.
+            stated_set = set(clean)
+            extra = _derive_quarters(facts, clean)
+            series = list(clean) + [p for p in extra if p not in stated_set]
+            series.sort(key=lambda pair: pair[1])
+            marked = [("derived" if (s, e) not in stated_set else "stated")
+                      for s, e in series]
+            return series, marked
+    return [], []
+
+
+def _consecutive(series: list[tuple[str, str]], count: int) -> list[tuple[str, str]]:
+    """The newest `count` quarters that are actually adjacent to each other.
+
+    XBRL does not hold every quarter for every filer: Micron is missing 2025 Q3,
+    NVIDIA 2025 Q1 and 2026 Q1, Apple 2024 Q3 and 2025 Q3. Taking "the last four
+    entries" therefore filled the hole with a quarter from the previous year —
+    Micron showed 2025 Q2 and no 2025 Q3, which is not its latest four quarters at
+    all.
+
+    So the series is walked backwards from the newest period and stops at the first
+    real gap. A gap is a missing ninety-day window: two consecutive entries are
+    adjacent when the older one ends within a fortnight of where the newer one
+    starts. Returning fewer quarters than asked for is the honest outcome, and the
+    caller reports how many months are actually covered.
+    """
+    if not series:
+        return []
+    ordered = sorted(series, key=lambda pair: pair[1], reverse=True)
+    picked = [ordered[0]]
+    for start, end in ordered[1:]:
+        if len(picked) >= count:
+            break
+        newer_start = picked[-1][0]
+        try:
+            gap = (date.fromisoformat(newer_start) - date.fromisoformat(end)).days
+            same_period = (date.fromisoformat(picked[-1][1])
+                           - date.fromisoformat(end)).days
+        except ValueError:
+            continue
+        # XBRL holds the same quarter more than once with a shifted start — Coca-Cola
+        # carries both 2025-03-29→06-27 and 2025-03-28→06-27 — so a second variant of
+        # a quarter already chosen has to be skipped or it displaces a real quarter
+        # further back and the four "latest" quarters come out wrong.
+        if 0 <= same_period <= 7:
+            continue
+        # A week or two of slack absorbs a 52/53-week fiscal calendar; a missing
+        # quarter leaves roughly ninety days unfilled. A negative gap means the
+        # older period runs past where the newer one begins, so the two overlap and
+        # neither is a clean predecessor — treated as a gap rather than spliced.
+        if 0 <= gap <= 21:
+            picked.append((start, end))
+    return list(reversed(picked))
+
+
+def _derive_quarters(facts: dict, known: list[tuple[str, str]]) -> dict[tuple[str, str], dict]:
+    """Reconstruct quarters a filer only tagged cumulatively.
+
+    Most filers do not tag every three-month period. In a 10-K, iXBRL requires
+    year-to-date figures, so the nine-month and twelve-month spans appear and the
+    three-month fourth quarter does not; and some filers, Coca-Cola among them,
+    tag the nine-month cumulative but not the three-month third quarter.
+
+    Because these figures accumulate, a missing quarter is the gap between the
+    period that ends where it ends and the period that ends where it starts:
+    Q4 = full year − nine months, and a missing Q3 = nine months − six months. EPS
+    and net income accumulate exactly, so both are recovered by subtraction rather
+    than estimated. This is what makes the series genuinely consecutive: every
+    company's history broke at the year boundary, and Micron's latest four quarters
+    came out as Q2, Q4, Q1, Q2 with Q3 absent purely because Q4 was the hole.
+    """
+    derived: dict[tuple[str, str], dict] = {}
+    known_set = set(known)
+
+    def spans(tags: tuple[str, ...], units: tuple[str, ...]) -> list[dict]:
+        out: list[dict] = []
+        for tag in tags:
+            node = facts.get(tag)
+            if not node:
+                continue
+            for row in _unit_series(node, units):
+                start, end = row.get("start"), row.get("end")
+                if not start or not end or row.get("val") is None:
+                    continue
+                try:
+                    days = (date.fromisoformat(end) - date.fromisoformat(start)).days
+                except ValueError:
+                    continue
+                # Only *cumulative* periods may be differenced. An individual
+                # quarter must be excluded or the subtraction is meaningless: with
+                # quarters in the pool, Meta's Q2 came out as 7.13 because Q1's
+                # figure was subtracted from Q2's rather than added to it. Two
+                # quarters is the shortest cumulative span (six months).
+                if days < CUMULATIVE_MIN_DAYS:
+                    continue
+                out.append({"start": start, "end": end, "days": days})
+        return out
+
+    eps_spans = spans(EPS_TAGS, ("USD/shares",))
+    income_spans = spans(INCOME_TAGS["net_income"], ("USD",))
+    if not eps_spans:
+        return derived
+
+    # Every distinct period end, newest last.
+    ends: list[str] = []
+    for row in eps_spans:
+        if row["end"] not in ends:
+            ends.append(row["end"])
+    ends.sort()
+
+    # The starting date of every cumulative period, so a gap can be attributed to
+    # the two periods whose difference it is.
+    starts: list[str] = []
+    for row in eps_spans:
+        if row["start"] not in starts:
+            starts.append(row["start"])
+    starts.sort()
+
+    def derive(earlier_start: str, end: str, later_start: str, later: str):
+        """The gap as a difference of two cumulative periods, or None."""
+        later_eps = _value_for(facts, EPS_TAGS, later_start, later, ("USD/shares",))
+        earlier_eps = _value_for(facts, EPS_TAGS, earlier_start, end, ("USD/shares",))
+        later_income = _value_for(facts, INCOME_TAGS["net_income"], later_start, later, ("USD",))
+        earlier_income = _value_for(facts, INCOME_TAGS["net_income"], earlier_start, end, ("USD",))
+
+        eps_value = (later_eps - earlier_eps
+                     if later_eps is not None and earlier_eps is not None else None)
+        income_value = (later_income - earlier_income
+                        if later_income is not None and earlier_income is not None else None)
+        if eps_value is None and income_value is None:
+            return None
+        return {
+            "gaap_eps": eps_value,
+            "net_income": income_value,
+            # The diluted count is a weighted average, so it is not additive:
+            # subtracting one average from another would invent a number. The
+            # earlier period's count is carried instead — the closest real
+            # observation — and the quarter is flagged as derived.
+            "shares": _value_for(facts, SHARE_TAGS, earlier_start, end, ("shares",)),
+            "derived": True,
+        }
+
+    for index, end in enumerate(ends):
+        for later in ends[index + 1:]:
+            if (end, later) in known_set:
+                continue
+            try:
+                gap_days = (date.fromisoformat(later) - date.fromisoformat(end)).days
+            except ValueError:
+                continue
+            if not (MIN_QUARTER_DAYS <= gap_days <= MAX_QUARTER_DAYS):
+                continue
+
+            # Case 1 — the same cumulative series, extended: full year minus nine
+            # months, or nine months minus six. Both periods share a start date.
+            shared = [s for s in starts
+                      if _value_for(facts, EPS_TAGS, s, end, ("USD/shares",)) is not None
+                      and _value_for(facts, EPS_TAGS, s, later, ("USD/shares",)) is not None]
+            if shared:
+                value = derive(shared[0], end, shared[0], later)
+                if value:
+                    derived[(end, later)] = value
+                    continue
+
+            # Case 2 — consecutive year-to-date spans: the six-month cumulative
+            # ending where the nine-month one starts. Coca-Cola tags the nine-month
+            # figure but not the three-month third quarter, so this is the only way
+            # that quarter is recoverable from an official source.
+            for earlier_start in starts:
+                if earlier_start >= later:
+                    continue
+                if _value_for(facts, EPS_TAGS, earlier_start, later, ("USD/shares",)) is None:
+                    continue
+                same = _value_for(facts, EPS_TAGS, earlier_start, end, ("USD/shares",))
+                if same is None:
+                    continue
+                value = derive(earlier_start, end, earlier_start, later)
+                if value:
+                    derived[(end, later)] = value
+                    break
+
+    return derived
 
 
 def _value_for(facts: dict, tags: tuple[str, ...], start: str, end: str,
@@ -311,17 +538,33 @@ def _effective_rate(tax: float | None, pretax: float | None,
 
 
 def _quarter_label(start: str, end: str) -> str:
-    """A label a reader recognises: the calendar quarter the period ends in.
+    """A label a reader recognises: the calendar quarter the period belongs to.
 
-    A filer whose fiscal year is offset (NVIDIA ends in January) still reports on
-    the calendar quarter boundaries XBRL records, so the end date is the honest
-    anchor rather than a guessed fiscal-quarter number.
+    Neither date works alone. Labelling by the end month is wrong when a fiscal
+    calendar spills into the next month — Coca-Cola's first quarter of 2026 runs
+    2026-01-01 to 2026-04-03, and reading the end month called it "2026 Q2", so the
+    card showed 2026 Q2, 2025 Q4, 2025 Q3, 2025 Q2 and looked as though a quarter
+    were missing. Labelling by the start month is wrong for an offset fiscal year:
+    NVIDIA's 2026-01-26 to 2026-04-26 is its first quarter, but it is the second
+    calendar quarter, and every period shifts.
+
+    So the end date decides, with one correction: a period that closes in the first
+    weeks of a month is the quarter that just ended, not the one that just began.
+    A period ending on the 30th of a month belongs to that month's quarter; one
+    ending on the 3rd belongs to the previous quarter.
     """
     try:
         when = date.fromisoformat(end)
     except ValueError:
         return end
-    return f"{when.year} Q{(when.month - 1) // 3 + 1}"
+    month = when.month
+    if when.day <= 20:
+        # Closes early in the month, so the quarter ended the month before.
+        month -= 1
+        if month == 0:
+            month = 12
+            when = when.replace(year=when.year - 1)
+    return f"{when.year} Q{(month - 1) // 3 + 1}"
 
 
 def _fiscal_label(start: str, end: str) -> str:
@@ -351,7 +594,10 @@ def quarterly_eps(ticker: str, *, quarters: int = QUARTERS,
     bridged.
     """
     facts = _facts(ticker)
-    series = _quarter_series(facts) if facts else []
+    series, marks = _quarter_series(facts) if facts else ([], [])
+    # A quarter marked "derived" has no three-month fact, so its figures come from
+    # the cumulative subtraction rather than a direct lookup.
+    is_derived = dict(zip(series, marks))
 
     if not series:
         return _from_analyst(analyst, quarters=quarters)
@@ -365,12 +611,23 @@ def quarterly_eps(ticker: str, *, quarters: int = QUARTERS,
         for s, e in series
     ]
     core_rate = _core_tax_rate(spread)
+    # Quarters reconstructed from the cumulative facts, keyed by their period.
+    derived_index = _derive_quarters(
+        facts, [pair for pair in series if is_derived.get(pair) == "stated"])
 
     out: list[QuarterlyEps] = []
-    for start, end in reversed(series[-quarters:]):
-        gaap_eps = _value_for(facts, EPS_TAGS, start, end, ("USD/shares",))
-        net_income = _value_for(facts, INCOME_TAGS["net_income"], start, end, ("USD",))
-        shares = _value_for(facts, SHARE_TAGS, start, end, ("shares",))
+    # Only quarters adjacent to each other, so a hole in the filings cannot be
+    # filled with a stale quarter from the previous year.
+    for start, end in reversed(_consecutive(series, quarters)):
+        # A derived quarter has no three-month fact of its own; its figures come
+        # from the cumulative subtraction, so they are read from there.
+        derived = derived_index.get((start, end), {}) if is_derived.get((start, end)) == "derived" else {}
+        gaap_eps = (derived.get("gaap_eps") if derived
+                    else _value_for(facts, EPS_TAGS, start, end, ("USD/shares",)))
+        net_income = (derived.get("net_income") if derived
+                      else _value_for(facts, INCOME_TAGS["net_income"], start, end, ("USD",)))
+        shares = (derived.get("shares") if derived
+                  else _value_for(facts, SHARE_TAGS, start, end, ("shares",)))
         revenue = _value_for(facts, INCOME_TAGS["revenue"], start, end, ("USD",))
         tax = _value_for(facts, INCOME_TAGS["tax"], start, end, ("USD",))
         pretax = _value_for(facts, INCOME_TAGS["pretax_income"], start, end, ("USD",))

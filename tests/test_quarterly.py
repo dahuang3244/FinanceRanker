@@ -190,6 +190,87 @@ def test_quarterly_bridge_reports_the_newest_quarter():
     assert result is None, "an unknown ticker must not invent a bridge"
 
 
+def test_quarter_labels_handle_a_spilling_fiscal_calendar():
+    """Neither date works alone, which is why this was wrong twice.
+
+    Coca-Cola's first quarter of 2026 runs 2026-01-01 to 2026-04-03. Labelling by
+    the end month called it Q2, so its card showed 2026 Q2, 2025 Q4, 2025 Q3,
+    2025 Q2 and looked as though a quarter were missing — the periods were right,
+    only the label was wrong. Labelling by the start month then broke the offset
+    filers: NVIDIA's 2026-01-26 to 2026-04-26 is its first quarter but the second
+    calendar quarter.
+    """
+    # An ordinary calendar quarter.
+    assert _quarter_label("2026-04-01", "2026-06-30") == "2026 Q2"
+    assert _quarter_label("2026-01-01", "2026-03-31") == "2026 Q1"
+    # A fiscal quarter that spills past the month end.
+    assert _quarter_label("2026-01-01", "2026-04-03") == "2026 Q1", (
+        "a period closing on the 3rd belongs to the quarter that just ended"
+    )
+    assert _quarter_label("2025-12-29", "2026-03-28") == "2026 Q1"
+    # A 52/53-week calendar closing just after the month end.
+    assert _quarter_label("2026-03-30", "2026-06-28") == "2026 Q2"
+    # An offset fiscal year. NVIDIA's first fiscal quarter ends in late April; the
+    # label is the calendar quarter, so this is Q2 — and that is deliberate, because
+    # every filer is labelled the same way and a fiscal-quarter number would be a
+    # different scheme per company.
+    assert _quarter_label("2026-01-26", "2026-04-26") == "2026 Q2"
+    # A year boundary, where the correction has to roll the year back too.
+    assert _quarter_label("2025-10-01", "2025-12-31") == "2025 Q4"
+    assert _quarter_label("2025-12-01", "2026-01-03") == "2025 Q4"
+
+
+def test_a_quarter_only_tagged_cumulatively_is_derived():
+    """Filers do not tag every three-month period.
+
+    In a 10-K iXBRL requires year-to-date figures, so the three-month fourth
+    quarter has no fact of its own; and some filers tag the nine-month cumulative
+    but not the three-month third quarter. Both are recovered by subtraction, which
+    is exact because these figures accumulate.
+    """
+    import inspect
+
+    from app import quarterly as module
+
+    source = inspect.getsource(module._derive_quarters)
+    assert "later_eps - earlier_eps" in source, "EPS must be derived by subtraction"
+    assert "later_income - earlier_income" in source
+    assert "MIN_QUARTER_DAYS <= gap_days <= MAX_QUARTER_DAYS" in source, (
+        "only a gap of about a quarter may be derived"
+    )
+    assert '"derived": True' in source, "a derived quarter must be marked as such"
+
+
+def test_a_derived_quarter_does_not_invent_a_share_count():
+    """A diluted count is a weighted average, so it cannot be subtracted."""
+    import inspect
+
+    from app import quarterly as module
+
+    source = inspect.getsource(module._derive_quarters)
+    assert 'SHARE_TAGS, earlier_start, end' in source, (
+        "the earlier period's real share count must be carried, not differenced"
+    )
+
+
+def test_the_picker_skips_a_second_variant_of_the_same_quarter():
+    """XBRL holds the same quarter with a shifted start.
+
+    Coca-Cola carries both 2025-03-29→06-27 and 2025-03-28→06-27. Without skipping
+    the variant, it displaced a real quarter and the four "latest" quarters came out
+    one short at the far end.
+    """
+    import inspect
+
+    from app import quarterly as module
+
+    source = inspect.getsource(module._consecutive)
+    assert "same_period" in source, "a variant of the chosen quarter must be detected"
+    assert "if 0 <= same_period <= 7:" in source, (
+        "and skipped rather than appended as another quarter"
+    )
+
+
 if __name__ == "__main__":
     import traceback
 
