@@ -36,7 +36,29 @@ def _user_data_dir() -> Path:
     return (Path(base) if base else Path.home() / ".local" / "share") / "FinanceRanker"
 
 
-DATA_DIR = _user_data_dir() if FROZEN else (BUNDLE_DIR / "data")
+def _frozen_data_dir() -> Path:
+    """Where a packaged build keeps its database and cache.
+
+    A `data` folder sitting beside the executable wins, which makes the copy
+    portable: it carries its own snapshot and opens with data already in it,
+    rather than showing an empty screen until the recipient runs a fetch. Failing
+    that it falls back to the per-user directory, so a read-only location (a
+    Program Files install, a network share) still works.
+    """
+    override = os.environ.get("FR_DATA_DIR")
+    if override:
+        return Path(override).expanduser()
+    try:
+        beside = Path(sys.executable).resolve().parent / "data"
+        beside.mkdir(parents=True, exist_ok=True)
+        if os.access(beside, os.W_OK):
+            return beside
+    except OSError:
+        pass
+    return _user_data_dir()
+
+
+DATA_DIR = _frozen_data_dir() if FROZEN else (BUNDLE_DIR / "data")
 CACHE_DIR = DATA_DIR / "cache"
 EXPORT_DIR = DATA_DIR / "exports"
 

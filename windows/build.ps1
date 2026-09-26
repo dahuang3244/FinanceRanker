@@ -79,7 +79,7 @@ if ($LASTEXITCODE -ne 0) { throw "dependency installation failed" }
 # ---- tests before shipping anything
 Write-Host "`n-- running tests" -ForegroundColor Cyan
 $env:PYTHONPATH = $root
-foreach ($t in @("test_engine","test_formula_revision","test_market_risk","test_snapshot_freshness","test_metric_catalog","test_adr_fallback","test_tsm_metrics","test_insights_public","test_preview","test_sectors","test_scale","test_health")) {
+foreach ($t in @("test_engine","test_formula_revision","test_market_risk","test_snapshot_freshness","test_metric_catalog","test_non_gaap_bridge","test_options","test_trackrecord","test_gex","test_treasury","test_i18n_coverage","test_quarterly","test_eps_basis","test_asset_freshness","test_volatility","test_ebitda_fallback","test_adr_fallback","test_tsm_metrics","test_insights_public","test_preview","test_sectors","test_scale","test_health")) {
     & $python "tests/$t.py"
     if ($LASTEXITCODE -ne 0) { throw "$t failed" }
 }
@@ -91,6 +91,13 @@ if (Get-Command node -ErrorAction SilentlyContinue) {
     node "tests/test_ranking_table.js"
     if ($LASTEXITCODE -ne 0) { throw "ranking table guard failed" }
     node "tests/test_analyst_ui.js"
+    if ($LASTEXITCODE -ne 0) { throw "analyst panel failed" }
+    node "tests/test_price_chart.js"
+    if ($LASTEXITCODE -ne 0) { throw "price chart failed" }
+    node "tests/test_options_ui.js"
+    if ($LASTEXITCODE -ne 0) { throw "options UI failed" }
+    node "tests/test_options_integration.js"
+    if ($LASTEXITCODE -ne 0) { throw "options integration failed" }
     if ($LASTEXITCODE -ne 0) { throw "ranking table guard failed" }
     node "tests/test_risk_labels.js"
     if ($LASTEXITCODE -ne 0) { throw "return/risk metric labels failed" }

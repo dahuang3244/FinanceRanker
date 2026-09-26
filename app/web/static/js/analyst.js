@@ -151,12 +151,27 @@ const FRAnalyst = (() => {
   }
 
   /* -------------------------------------------------- earnings surprise bars */
+  /* The feed's `actual` is not always the same measure as its `estimate`. For
+     Alphabet the actual is GAAP diluted EPS (9.11) while the estimate is a
+     non-GAAP forecast (2.90), which rendered as "+214% beat" on a quarter that, on
+     a like-for-like basis, missed. Where the backend supplied the adjusted figure
+     it is used as the actual, so the two bars and the surprise share one basis. */
   function surpriseChart(history) {
     if (!history || !history.length) return "";
-    const rows = history.filter((e) => e.eps_actual !== null || e.eps_estimate !== null);
+    const rows = history
+      .map((e) => {
+        const actual = (e.adjusted_eps === null || e.adjusted_eps === undefined)
+          ? e.eps_actual : e.adjusted_eps;
+        const estimate = e.eps_estimate;
+        const surprise = (actual === null || actual === undefined || !estimate)
+          ? e.surprise_pct
+          : (actual - estimate) / Math.abs(estimate);
+        return { ...e, shownActual: actual, shownEstimate: estimate, shownSurprise: surprise };
+      })
+      .filter((e) => e.shownActual !== null || e.shownEstimate !== null);
     if (!rows.length) return "";
     const W = 720, H = 200, PAD = { l: 46, r: 12, t: 14, b: 34 };
-    const values = rows.flatMap((e) => [e.eps_actual, e.eps_estimate]).filter((v) => v !== null);
+    const values = rows.flatMap((e) => [e.shownActual, e.shownEstimate]).filter((v) => v !== null);
     const zero = Math.min(0, ...values);
     const top = Math.max(...values, 0.0001);
     const lo = zero < 0 ? zero * 1.15 : 0;
@@ -168,25 +183,25 @@ const FRAnalyst = (() => {
     const bars = rows.map((e, i) => {
       const cx = PAD.l + slot * i + slot / 2;
       const parts = [];
-      if (e.eps_estimate !== null) {
-        const yTop = y(Math.max(e.eps_estimate, 0));
+      if (e.shownEstimate !== null) {
+        const yTop = y(Math.max(e.shownEstimate, 0));
         parts.push(`<rect x="${(cx - barW - 2).toFixed(1)}" y="${yTop.toFixed(1)}"
           width="${barW}" height="${Math.max(1, H - PAD.b - yTop).toFixed(1)}" class="abar-est">
-          <title>${escapeHtml(t("an.consensus"))} ${fmtNum(e.eps_estimate)}</title></rect>`);
+          <title>${escapeHtml(t("an.consensus"))} ${fmtNum(e.shownEstimate)}</title></rect>`);
       }
-      if (e.eps_actual !== null) {
-        const beat = e.surprise_pct !== null && e.surprise_pct >= 0;
-        const yTop = y(Math.max(e.eps_actual, 0));
+      if (e.shownActual !== null) {
+        const beat = e.shownSurprise !== null && e.shownSurprise >= 0;
+        const yTop = y(Math.max(e.shownActual, 0));
         parts.push(`<rect x="${(cx + 2).toFixed(1)}" y="${yTop.toFixed(1)}"
           width="${barW}" height="${Math.max(1, H - PAD.b - yTop).toFixed(1)}"
           class="abar-act tone-${beat ? "good" : "low"}">
-          <title>${escapeHtml(t("an.actual"))} ${fmtNum(e.eps_actual)} · ${fmtPct(e.surprise_pct)}</title></rect>`);
+          <title>${escapeHtml(t("an.actual"))} ${fmtNum(e.shownActual)} · ${fmtPct(e.shownSurprise)}</title></rect>`);
       }
       const label = e.quarter_end ? e.quarter_end.slice(0, 7) : e.period;
       parts.push(`<text x="${cx.toFixed(1)}" y="${H - 18}" class="achart-axis" text-anchor="middle">${label}</text>`);
-      if (e.surprise_pct !== null) {
+      if (e.shownSurprise !== null && e.shownSurprise !== undefined) {
         parts.push(`<text x="${cx.toFixed(1)}" y="${H - 5}" text-anchor="middle"
-          class="achart-surprise tone-${e.surprise_pct >= 0 ? "good" : "low"}">${fmtPct(e.surprise_pct)}</text>`);
+          class="achart-surprise tone-${e.shownSurprise >= 0 ? "good" : "low"}">${fmtPct(e.shownSurprise)}</text>`);
       }
       return parts.join("");
     }).join("");

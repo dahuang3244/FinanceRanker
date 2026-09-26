@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>期权环境 · FinanceRanker</title>
+<meta name="description" content="任意美股的期权环境：成交量与未平仓的 Put/Call 比率、Max Pain、持仓集中区与异动合约。" />
+<link rel="icon" href="favicon.svg" type="image/svg+xml" />
+<link rel="stylesheet" href="css/shell.css" />
+<link rel="stylesheet" href="css/components.css" />
+<link rel="stylesheet" href="css/company.css" />
+<link rel="stylesheet" href="css/options.css" />
+</head>
+<body data-page="op">
+<div class="app">
+  <main class="main">
+    <header class="pagehead">
+      <div>
+        <div class="crumb"><span data-i18n="nav.group">工作台</span><span class="sep">/</span><b data-i18n="nav.options">期权环境</b></div>
+        <h1 data-i18n="op.title">期权环境</h1>
+        <p class="lede" data-i18n="op.lede">输入任意美股代码，读取它的期权链：成交量与未平仓的 Put/Call 比率、Max Pain、持仓集中区与异动合约。全部来自成交量与未平仓量，不含任何预测。</p>
+      </div>
+      <div class="pagehead-actions">
+        <span class="badge" id="opSource">—</span>
+      </div>
+    </header>
+
+    <div class="pagebody">
+      <!-- ticker picker -->
+      <div class="glass toolbar">
+        <div class="search">
+          <span id="opSearchIcon"></span>
+          <input class="input" type="search" id="opQuery" data-i18n-ph="op.ph"
+                 placeholder="输入美股代码，例如 AAPL" autocomplete="off" />
+        </div>
+        <label class="check" title="">
+          <input type="checkbox" id="opRefresh" /> <span data-i18n="op.forceRefresh">强制刷新</span>
+        </label>
+        <div class="field" style="min-width:150px">
+          <label for="opExpiries" data-i18n="op.expiries">读取到期月数</label>
+          <select class="input" id="opExpiries">
+            <option value="2">2</option>
+            <option value="4" selected>4</option>
+            <option value="6">6</option>
+          </select>
+        </div>
+        <button class="btn btn--primary" type="button" id="opLoad" data-i18n="op.load"></button>
+        <button class="btn btn--quiet" type="button" id="opPicksReset" data-i18n="op.screened"></button>
+      </div>
+      <div class="row" id="opPicks" style="flex-wrap:wrap;gap:6px;margin-top:-6px"></div>
+
+      <div id="opBody"></div>
+    </div>
+
+    <footer class="foot" data-i18n="op.foot">
+      <b>未平仓量只说明合约在哪里，不说明持有人是谁。</b>
+      同样是价外 Put，可能是对冲，也可能是看跌下注——这份数据区分不了。
+    </footer>
+  </main>
+</div>
+
+<script src="js/i18n.js"></script>
+<script src="js/shell.js"></script>
+<script src="js/options.js"></script>
+</body>
+</html>

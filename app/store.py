@@ -136,24 +136,42 @@ def load_run(run_id: str) -> list[MetricRow]:
 
 
 def latest_run_id() -> str | None:
-    """The snapshot holding the newest data.
+    """The snapshot that holds the newest usable data.
 
-    Resolved from `snapshots.captured_at`, not from a clock column on `runs`.
-    Ordering by a run timestamp is unreliable for two independent reasons:
-    concurrent refreshes can finish out of order, and rows written by different
-    builds may have been stamped in different timezones (a local-time build and
-    a UTC build produce stamps that are not comparable). `captured_at` sits on
-    the row actually being served, so it says which rows are newest.
+    Preference order, and why it is not simply "newest":
 
-    "Newest" is preferred over "most complete" on purpose: a staleness check
-    downstream (`app.main._staleness`) already detects a snapshot written before
-    the current metric set and tells the viewer to refresh, and that check is
-    visible. Preferring completeness here instead would silently hide newer
-    prices behind an older, richer snapshot — a worse failure, because nothing
-    on screen would reveal it.
+    1. the newest snapshot written by the **current metric set**;
+    2. failing that, the newest snapshot of any vintage.
+
+    Step 1 matters because "newest" and "renderable" are different questions. A
+    snapshot predating the current columns renders as blanks, so ranking purely
+    by time would serve that older-shaped snapshot over a newer complete one
+    whenever it happened to be captured later — which is how a full screen of
+    blanks appears with nothing actually broken.
+
+    Step 2 exists so a database with no current-version snapshot still returns
+    something; the API marks it stale and the UI offers a refresh.
+
+    `metrics_version` is read from the stored payload, so no schema change is
+    needed and rows written before the field existed simply report 0.
     """
     init_db()
+    from app.engine.scoring import METRICS_VERSION
+
     with _connect() as conn:
+        row = conn.execute(
+            """
+            SELECT run_id
+              FROM snapshots
+             GROUP BY run_id
+            HAVING MAX(COALESCE(json_extract(payload, '$.metrics_version'), 0)) = ?
+             ORDER BY MAX(captured_at) DESC
+             LIMIT 1
+            """,
+            (METRICS_VERSION,),
+        ).fetchone()
+        if row:
+            return row["run_id"]
         row = conn.execute(
             "SELECT run_id FROM snapshots ORDER BY captured_at DESC LIMIT 1"
         ).fetchone()

@@ -6,6 +6,37 @@
    ========================================================================== */
 "use strict";
 
+/* ------------------------------------------------------------ stale-page guard
+   A browser can hold a page from an earlier build, and the scripts that page
+   loaded are then just as old — which is how a removed navigation entry kept
+   reappearing and how a deleted renderer kept drawing a block that no longer
+   exists in the payload.
+
+   The server stamps every served page with the current asset build in a meta tag.
+   If this script's own URL carries no matching version, the markup that loaded it
+   is stale, so the page reloads once with a cache-busting parameter. Once per
+   session, so a misconfiguration cannot become a reload loop. */
+(() => {
+  const meta = document.querySelector('meta[name="fr-build"]');
+  if (!meta) return;                       // served by an older build; nothing to compare
+  // Read the script tags defensively: a test harness may not model
+  // `document.scripts`, and a guard that throws is worse than no guard.
+  const scripts = document.scripts
+    ? Array.from(document.scripts)
+    : Array.from(document.querySelectorAll ? document.querySelectorAll("script[src]") : []);
+  const versioned = scripts.some((s) =>
+    (s.getAttribute("src") || "").includes("?v="));
+  if (versioned) return;                   // this page's assets are already current
+  const flag = "fr-reloaded";
+  try {
+    if (sessionStorage.getItem(flag)) return;
+    sessionStorage.setItem(flag, meta.content);
+  } catch { return; }                      // storage unavailable: leave it alone
+  const url = new URL(window.location.href);
+  url.searchParams.set("fresh", meta.content);
+  window.location.replace(url.toString());
+})();
+
 const FR = (() => {
   /* ------------------------------------------------------------------ icons */
   const P = {
@@ -49,6 +80,7 @@ const FR = (() => {
     { key: "preview", i18n: "nav.preview", href: "preview.html", icon: "search", hintKey: "nav.preview.hint" },
     { key: "refresh", i18n: "nav.refresh", href: "refresh.html", icon: "play", hintKey: "nav.refresh.hint" },
     { key: "ranking", i18n: "nav.ranking", href: "ranking.html", icon: "table", hintKey: "nav.ranking.hint" },
+    { key: "options", i18n: "nav.options", href: "options.html", icon: "zap", hintKey: "nav.options.hint" },
     { key: "history", i18n: "nav.history", href: "history.html", icon: "clock", hintKey: "nav.history.hint" },
     { key: "sources", i18n: "nav.sources", href: "sources.html", icon: "database", hintKey: "nav.sources.hint" },
   ];
@@ -93,6 +125,16 @@ const FR = (() => {
     strategies: () => api.get("/api/strategies"),
     // Sell-side ratings, target changes, earnings surprises and estimates.
     analyst: (ticker) => api.get(`/api/analyst/${encodeURIComponent(ticker)}`),
+    // Option-market positioning for any US ticker.
+    options: (ticker, opts = {}) =>
+      api.get(`/api/options/${encodeURIComponent(ticker)}`, opts),
+    // A company's dated record and catalysts, from the SEC filing index.
+    record: (ticker) => api.get(`/api/record/${encodeURIComponent(ticker)}`),
+    // The US Treasury par yield curve, the risk-free reference.
+    rates: () => api.get("/api/rates"),
+    // Per-quarter GAAP and adjusted EPS, with the bridge behind each quarter.
+    eps: (ticker, quarters = 4) =>
+      api.get(`/api/eps/${encodeURIComponent(ticker)}`, { quarters }),
     // The metric catalogue: which metrics exist, their component and whether
     // the backend scores them. Drives the company detail blocks.
     metrics: () => api.get("/api/metrics"),

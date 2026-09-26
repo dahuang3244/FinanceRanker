@@ -395,6 +395,23 @@
 .ptag.tone-mid { color: var(--mid); background: var(--mid-soft); border-color: rgba(160, 117, 44, 0.24); }
 .ptag.tone-low { color: var(--low); background: var(--low-soft); border-color: rgba(156, 106, 73, 0.24); }
 
+/* ---- track record and catalysts ---- */
+.co-rec-date { white-space: nowrap; font-size: 11.5px; }
+.co-rec-detail { font-size: 10.5px; margin-top: 3px; line-height: 1.5; }
+.co-cat-watch { font-size: 11.5px; line-height: 1.55; max-width: 320px; color: var(--ink-2); }
+.co-cat-figures { font-size: 11px; line-height: 1.55; max-width: 240px; }
+tr.is-pending td { background: var(--good-soft); }
+
+/* the kind chips reuse the options page's chip styling */
+.co-chip--agreement { color: var(--good); background: var(--good-soft); border-color: rgba(79, 107, 70, 0.24); }
+.co-chip--acquisition { color: var(--accent); background: var(--accent-soft); border-color: var(--accent-line); }
+.co-chip--management { color: var(--mid); background: var(--mid-soft); border-color: rgba(160, 117, 44, 0.24); }
+.co-chip--obligation { color: var(--soft); background: var(--soft-soft); }
+.co-chip--impairment,
+.co-chip--disposal { color: var(--low); background: var(--low-soft); border-color: rgba(156, 106, 73, 0.24); }
+.co-chip--strategic { color: var(--ink-2); }
+.co-chip--results { color: var(--muted); }
+
 .annotes {
   margin: 16px 0 0;
   padding-left: 18px;
@@ -498,3 +515,52 @@
   .detailbar { flex-direction: column; align-items: stretch; }
   .ranknav { justify-content: space-between; }
 }
+
+/* ---- latest 4 quarters of EPS, each expandable to its own bridge ---- */
+.epsgrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 12px;
+}
+.epsq {
+  border: 1px solid var(--hair);
+  border-radius: var(--r-md);
+  background: var(--well);
+  overflow: hidden;
+}
+.epsq[open] { grid-column: 1 / -1; border-color: var(--accent-line); background: var(--surface); }
+.epsq summary {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px;
+  cursor: pointer;
+  list-style: none;
+}
+.epsq summary::-webkit-details-marker { display: none; }
+.epsq summary:hover { background: var(--accent-soft); }
+.epsq-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.epsq-label { font-size: 13px; letter-spacing: -0.01em; }
+.epsq-figs { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
+.epsq-fig { display: flex; flex-direction: column; gap: 2px; }
+.epsq-fig i {
+  font-style: normal;
+  font-size: 9.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.epsq-fig b { font-size: 17px; letter-spacing: -0.02em; }
+.epsq.is-up .epsq-fig:nth-child(2) b { color: var(--good); }
+.epsq.is-down .epsq-fig:nth-child(2) b { color: var(--low); }
+.epsq-gap {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--muted);
+}
+.epsq-body { padding: 0 16px 16px; }
+.epsq-body .hint { margin: 0 0 10px; }
+
+/* a basis mismatch is a caveat worth noticing, not fine print */
+.epsq-warn { color: var(--mid); }

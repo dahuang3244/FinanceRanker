@@ -66,13 +66,26 @@
         <div class="glass board" id="pvBoard"></div>
 
         <!-- Price chart gets its own full-width row: side by side it was too
-             narrow to read the trend it exists to show. -->
+             narrow to read the trend it exists to show.
+
+             The plot stretches to the container width (preserveAspectRatio
+             "none"), which would distort any text drawn inside it, so the axis
+             values live in HTML gutters beside and below the SVG. Without them
+             the chart showed a shape with no scale: a 3% drift and a 90% run
+             looked identical. -->
         <div class="glass glass--solid" style="margin-top:14px;padding:18px 20px">
           <div class="section-head" style="margin-bottom:10px">
             <div><h2 style="font-size:13px" data-i18n="pv.spark">价格走势</h2>
               <p class="hint" id="pvSparkNote">—</p></div>
           </div>
-          <svg class="pv-spark" id="pvSpark" viewBox="0 0 600 150" preserveAspectRatio="none"></svg>
+          <div class="pv-chart">
+            <div class="pv-yaxis" id="pvSparkY" aria-hidden="true"></div>
+            <div class="pv-plot">
+              <svg class="pv-spark" id="pvSpark" viewBox="0 0 1000 150"
+                   preserveAspectRatio="none" role="img"></svg>
+              <div class="pv-xaxis" id="pvSparkX" aria-hidden="true"></div>
+            </div>
+          </div>
         </div>
 
         <div class="glass glass--solid" style="margin-top:14px;padding:18px 20px">

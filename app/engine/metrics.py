@@ -19,7 +19,15 @@ from app.engine.market import (
     window_returns,
 )
 from app.engine.scoring import METRICS_VERSION, apply_coverage
-from app.models import AnalystView, Fundamentals, MetricRow, PriceHistory, Quote
+from app.models import (
+    AnalystView,
+    Fundamentals,
+    MetricRow,
+    NonGaapLine,
+    NonGaapReconciliation,
+    PriceHistory,
+    Quote,
+)
 
 log = logging.getLogger(__name__)
 
@@ -130,6 +138,7 @@ def compute_row(
     _market_block(row, history, quote, benchmark, analyst)
     _fundamental_block(row, fund)
     _pershare_block(row, fund)
+    _prefer_reconciled_eps(row)
     _estimate_block(row, quote)
     _multiples_block(row)
     apply_ev_ebitda(row)
@@ -155,6 +164,7 @@ def compute_row(
         row.status = "Partial filing data"
 
     row.data_coverage = apply_coverage(row)
+    _finalise_bridge(row)
     market_note = _market_provenance_note(row)
 
     # Status/notes are composed last so the currency warning survives.
@@ -342,6 +352,7 @@ def _fundamental_block(row: MetricRow, fund: Fundamentals) -> None:
     cost = _series_value(fund.cost_of_revenue, anchor)
     operating = _series_value(fund.operating_income, anchor)
     net = _series_value(fund.net_income, anchor)
+    pretax = _series_value(fund.pretax_income, anchor)
     equity = _series_value(fund.equity, anchor)
     assets = _series_value(fund.assets, anchor)
     cash = _series_value(fund.cash, anchor)
@@ -480,7 +491,22 @@ def _fundamental_block(row: MetricRow, fund: Fundamentals) -> None:
     # Enterprise-value and coverage figures. EBITDA is the same operating
     # income + D&A used by EV/EBITDA, kept on the row so the multiple and the
     # leverage ratio cannot disagree about what EBITDA is.
-    row.ebitda_fy0 = (operating + row.da_fy0) if (operating is not None and row.da_fy0 is not None) else None
+    #
+    # When a filer stops tagging operating income, EBITDA would otherwise go
+    # blank and take two valuation metrics with it. Johnson & Johnson is the case
+    # in point: its `OperatingIncomeLoss` series ends in 2014, and it tags neither
+    # `CostsAndExpenses` nor `OperatingExpenses`, so operating profit cannot be
+    # reconstructed. Pre-tax income plus D&A is used instead, and the row records
+    # that this includes non-operating items — a labelled approximation is more
+    # use than a blank, and more honest than presenting it as operating EBITDA.
+    if operating is not None and row.da_fy0 is not None:
+        row.ebitda_fy0 = operating + row.da_fy0
+    elif pretax is not None and row.da_fy0 is not None:
+        row.ebitda_fy0 = pretax + row.da_fy0
+        row.ebitda_basis = (
+            "Pre-tax income + D&A: this filer no longer tags operating income and "
+            "tags no operating-expense total, so non-operating items are included"
+        )
     if debt is not None and cash is not None:
         row.net_debt_fy0 = debt - cash
     if row.net_debt_fy0 is not None and row.ebitda_fy0 and row.ebitda_fy0 > 0:
@@ -620,6 +646,157 @@ def _total_debt(fund: Fundamentals, anchor: date | None) -> float | None:
 # --------------------------------------------------------------------------- #
 # per-share non-GAAP bridge (Data Cache Y..AG)
 # --------------------------------------------------------------------------- #
+# The line items a GAAP-to-adjusted reconciliation may contain, in the order a
+# reader expects: the non-operating gains and one-off charges a filer typically
+# excludes, then the recurring non-cash items.
+#
+# `uniform` marks the items every filer is expected to tag when it has them, so
+# the reconciliation can say how many of the *common* lines a company disclosed.
+# Company-specific items (a legal settlement, an acquisition cost) are reported
+# when present but do not count against completeness.
+BRIDGE_LINES: list[tuple[str, str, bool, bool]] = [
+    # (field, label, is_addback, counts_toward_completeness)
+    ("equity_securities_gain", "Equity securities gain", False, False),
+    ("other_nonoperating_income", "Other non-operating (income) expense", False, False),
+    ("legal_settlement", "Legal settlement / loss contingency", True, False),
+    ("impairment", "Impairment loss", True, False),
+    ("acquisition_costs", "Acquisition-related costs", True, False),
+    ("debt_extinguishment", "Loss (gain) on debt extinguishment", True, False),
+    ("discontinued_operations", "Discontinued operations, net of tax", True, False),
+    ("restructuring", "Restructuring charges", True, True),
+    ("amortization", "Amortization of intangibles", True, True),
+    ("sbc", "Share-based compensation", True, True),
+]
+
+
+def _reconciliation(
+    row: MetricRow,
+    fund: Fundamentals,
+    tax_rate: float,
+    *,
+    shares_override: float | None = None,
+) -> None:
+    """Build the GAAP-to-adjusted bridge this row's adjusted EPS came from.
+
+    Every add-back is shown gross and then net of tax at the filer's effective
+    rate. That is an approximation — a company may exclude an item's tax effect
+    entirely — so the rate is stated on the reconciliation rather than buried.
+
+    `shares_override` exists for depositary receipts: TSM files in TWD but trades
+    as USD ADSs, so the earnings side stays in TWD while the per-share side must
+    use the ADS count to line up with the row's own EPS figures.
+    """
+    anchor = fund.fiscal_end
+    shares = shares_override or row.diluted_shares_fy0
+    gaap_income = _series_value(fund.net_income, anchor)
+
+    lines: list[NonGaapLine] = []
+    missing: list[str] = []
+    adjusted = gaap_income
+    complete = 0
+    expected = 0
+
+    for field, label, is_addback, uniform in BRIDGE_LINES:
+        value = _series_value(getattr(fund, field, None), anchor)
+        if uniform:
+            expected += 1
+        if value is None:
+            # Only the recurring items are worth calling out as not disclosed.
+            if uniform:
+                missing.append(label)
+            continue
+        if uniform:
+            complete += 1
+        # A small non-zero figure is noise in a reconciliation, not a signal.
+        if abs(value) < 1e-6:
+            continue
+        lines.append(NonGaapLine(key=field, label=label, value=value,
+                                 is_addback=is_addback,
+                                 source=f"{fund.source} XBRL tag"))
+
+    # Adjusted income: a gain is subtracted, an add-back charge is added back.
+    if gaap_income is not None:
+        for line in lines:
+            if line.value is None:
+                continue
+            adjusted += line.value if line.is_addback else -line.value
+
+    adjusted_eps = None
+    if adjusted is not None and shares:
+        adjusted_eps = adjusted / shares
+
+    row.non_gaap = NonGaapReconciliation(
+        currency=fund.reporting_currency or fund.currency or "",
+        tax_rate=tax_rate,
+        lines=lines,
+        missing=missing,
+        gaap_net_income=gaap_income,
+        adjusted_net_income=adjusted,
+        diluted_shares=shares,
+        gaap_eps=None,
+        adjusted_eps=adjusted_eps,
+        complete_years=complete,
+        # Stated explicitly, because this bridge is built from annual (FY) XBRL
+        # facts and a reader cannot tell that from the numbers. It is a different
+        # measurement from the quarterly bridge: a year of adjustments divided by
+        # a year of shares averages away quarters that have nothing in common —
+        # Alphabet's equity-security gains alone run from $1.3bn to $99bn across
+        # six consecutive quarters.
+        period="annual",
+        period_label=("FY" + str(fund.fiscal_end.year)) if fund.fiscal_end else "annual",
+        period_span=("FY ending " + fund.fiscal_end.isoformat()) if fund.fiscal_end else "",
+        eps_basis=(
+            "Annual diluted EPS, from full-year (FY) XBRL facts. The quarterly tab "
+            "shows the same company quarter by quarter, which is the figure to use "
+            "when a single quarter carried most of the year's adjustments."
+        ),
+        basis=(
+            f"Adjusted net income = GAAP net income "
+            f"{'+' if lines else ''} disclosed non-operating gains and one-off charges, "
+            f"then / diluted shares. Company-specific items are reported when tagged and "
+            f"listed as unavailable when not; a missing line is never treated as zero."
+        ),
+    )
+
+
+def _finalise_bridge(row: MetricRow) -> None:
+    """Record the per-share endpoints once ADR normalization has settled them.
+
+    Called last, because for a depositary receipt the share count and EPS are
+    rewritten after the bridge is built, and a bridge whose endpoints disagreed
+    with the row's own EPS columns would be worse than none.
+    """
+    recon = row.non_gaap
+    if recon is None:
+        return
+    recon.gaap_eps = row.gaap_eps
+    recon.adjusted_eps = (
+        row.reported_non_gaap_eps
+        or row.model_adjusted_eps
+        or recon.adjusted_eps
+    )
+    # Headline figures for the growth block: the adjusted EPS itself, and how
+    # much of it is adjustment rather than reported earnings. The uplift is the
+    # honest headline — two companies can post the same adjusted EPS while one
+    # needed three times the add-backs to get there.
+    row.non_gaap_eps = recon.adjusted_eps
+    # The uplift only means something against a positive reported base. Dividing
+    # by a loss flips the sign (a small loss would read as a huge "uplift"), and
+    # a near-zero base explodes into noise, so both are left blank.
+    if row.gaap_eps is not None and row.gaap_eps > 1e-6 and recon.adjusted_eps is not None:
+        row.gaap_to_adjusted_uplift = recon.adjusted_eps / row.gaap_eps - 1.0
+    if recon.gaap_eps is not None and recon.adjusted_eps is not None:
+        recon.eps_basis = f"per share in {row.currency}"
+        # A depositary receipt keeps its earnings in the reporting currency while
+        # its per-share figures are translated, so say so rather than leaving the
+        # two sides of one table looking like they are the same unit.
+        if (row.filing_currency or "").upper() != (row.currency or "").upper():
+            recon.basis += (
+                f" Income lines are in {recon.currency} as filed; per-share figures are "
+                f"converted to {row.currency} per ADS."
+            )
+
+
 def _pershare_block(row: MetricRow, fund: Fundamentals) -> None:
     anchor = fund.fiscal_end
     tax_rate = effective_tax_rate(fund)
@@ -631,6 +808,7 @@ def _pershare_block(row: MetricRow, fund: Fundamentals) -> None:
     if row.gaap_eps is None or not shares:
         row.model_adjusted_eps = row.reported_non_gaap_eps
         row.selected_adjusted_eps = row.reported_non_gaap_eps or row.model_adjusted_eps
+        _reconciliation(row, fund, tax_rate)
         return
 
     def per_share(series) -> float | None:
@@ -655,6 +833,23 @@ def _pershare_block(row: MetricRow, fund: Fundamentals) -> None:
         row.model_adjusted_eps = None
 
     row.selected_adjusted_eps = row.reported_non_gaap_eps or row.model_adjusted_eps
+    _reconciliation(row, fund, tax_rate)
+
+
+# The `model_adjusted_eps` above charges every add-back at the effective tax
+# rate, while `_reconciliation` computes adjusted EPS from net income directly.
+# They should agree; when they do not, the reconciliation is the more complete
+# number because it includes the non-operating lines, so it wins.
+def _prefer_reconciled_eps(row: MetricRow) -> None:
+    recon = row.non_gaap
+    if recon is None or recon.adjusted_eps is None:
+        return
+    if row.gaap_eps is None:
+        return
+    # Only replace a model figure, never a figure the company itself published.
+    if row.reported_non_gaap_eps is None:
+        row.model_adjusted_eps = recon.adjusted_eps
+        row.selected_adjusted_eps = recon.adjusted_eps
 
 
 # --------------------------------------------------------------------------- #
@@ -697,13 +892,17 @@ def _multiples_block(row: MetricRow) -> None:
 
 
 def apply_ev_ebitda(row: MetricRow) -> None:
-    """Needs D&A and the balance-sheet inputs, so it runs after the raw block."""
+    """Needs D&A and the balance-sheet inputs, so it runs after the raw block.
+
+    Uses the row's own `ebitda_fy0` rather than recomputing it, so a filer whose
+    EBITDA was assembled by the labelled fallback gets the same figure here as
+    the rest of the screen shows. Recomputing from operating income would have
+    silently dropped those filers back to a blank multiple.
+    """
     if row.market_cap is None or row.debt_fy0 is None or row.cash_fy0 is None:
         return
-    if row.operating_income_fy0 is None or row.da_fy0 is None:
-        return
-    ebitda = row.operating_income_fy0 + row.da_fy0
-    if ebitda <= 0:
+    ebitda = row.ebitda_fy0
+    if ebitda is None or ebitda <= 0:
         return
     enterprise_value = row.market_cap + row.debt_fy0 - row.cash_fy0
     row.ev_to_ebitda = enterprise_value / ebitda

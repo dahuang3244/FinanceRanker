@@ -79,6 +79,8 @@ REFERENCE_METRICS: list[tuple[str, str, bool, str]] = [
     ("revenue_cagr_3y", "growth", True, "highly collinear with the scored 5-year CAGR"),
     ("eps_growth_yoy", "growth", True, "complements the scored forward-looking FY1 estimate; kept for cross-checking"),
     ("net_income_growth_yoy", "growth", True, "highly collinear with EPS growth on a stable share count"),
+    ("non_gaap_eps", "growth", True, "not comparable across filers: each company defines its own adjustments"),
+    ("gaap_to_adjusted_uplift", "growth", True, "measures disclosure practice as much as underlying earnings quality"),
     ("gross_profit_growth_yoy", "growth", True, "unavailable for many filers that tag only a cost line"),
     ("fcf_growth_yoy", "growth", True, "undefined when the prior year's free cash flow is negative"),
     ("asset_turnover", "profitability", True, "size/labour differences dominate across sectors"),
@@ -104,6 +106,7 @@ METRIC_PRESENTATION: dict[str, str] = {
     "revenue_cagr_3y": "ratio", "eps_growth_fy1": "ratio", "eps_cagr_5y": "ratio",
     "eps_growth_yoy": "ratio", "net_income_growth_yoy": "ratio",
     "gross_profit_growth_yoy": "ratio", "fcf_growth_yoy": "ratio",
+    "non_gaap_eps": "num", "gaap_to_adjusted_uplift": "ratio",
     # profitability
     "gross_margin": "ratio", "operating_margin": "ratio", "net_margin": "ratio",
     "roe": "ratio", "roic": "ratio", "roa": "ratio",
@@ -140,6 +143,8 @@ METRIC_LABELS: dict[str, str] = {
     "net_income_growth_yoy": "Net income growth YoY",
     "gross_profit_growth_yoy": "Gross profit growth YoY",
     "fcf_growth_yoy": "FCF growth YoY",
+    "non_gaap_eps": "Adjusted (non-GAAP) EPS",
+    "gaap_to_adjusted_uplift": "GAAP to adjusted EPS uplift",
     "gross_margin": "Gross margin",
     "operating_margin": "Operating margin",
     "net_margin": "Net margin",
@@ -454,11 +459,16 @@ MIN_PER_COMPONENT = {
 MIN_TOTAL_METRICS = 12
 MIN_TOTAL_COVERAGE = len(METRICS)
 
-# Bump whenever the scoring universe changes shape (metrics added or removed).
-# Snapshots are stamped with this number so a screen can tell "this figure is
-# blank because the source had nothing" apart from "this snapshot predates the
-# metric entirely".
-METRICS_VERSION = 3
+# Bump whenever the scoring universe or the set of reported metrics changes shape
+# (metrics added or removed, or new derived figures introduced). Snapshots are
+# stamped with this number so a screen can tell "this figure is blank because the
+# source had nothing" apart from "this snapshot predates the metric entirely".
+#
+# Forgetting to bump this is not cosmetic: a snapshot written by the previous
+# build carries the old version number, the staleness check sees a match, and the
+# screen renders blank cells with no explanation — which is exactly the failure
+# this number exists to prevent.
+METRICS_VERSION = 4
 
 
 def compute_coverage(row: MetricRow) -> int:

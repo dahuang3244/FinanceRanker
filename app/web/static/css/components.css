@@ -607,3 +607,33 @@ table.data.ranking thead th.grp-start { padding-top: 6px; }
 @media (max-width: 720px) {
   .scale-legend-cell { width: 22px; height: 15px; font-size: 9px; }
 }
+
+/* ---- risk-free rate strip on the overview ---- */
+.ratestrip { display: flex; flex-direction: column; gap: 14px; }
+.ratesrow {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(74px, 1fr));
+  gap: 10px;
+}
+.ratetile {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--hair);
+  background: var(--well);
+}
+.ratetile .k {
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.ratetile .v { font-size: 15px; letter-spacing: -0.01em; }
+.ratetile.is-key {
+  border-color: var(--accent-line);
+  background: var(--accent-soft);
+}
+.ratetile.is-key .k { color: var(--accent-deep); }
+.ratesmeta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 11px; }

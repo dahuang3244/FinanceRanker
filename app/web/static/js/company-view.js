@@ -431,6 +431,196 @@ const FRCompany = (() => {
         <div class="skeleton" style="height:120px;margin-top:18px"></div></div>`).join("")}`;
   }
 
+  /* ------------------------------------------------------------- options link */
+  /* A link, not an embedded panel: a chain costs several requests, and most
+     visits to a company page are not asking about its options. */
+  function optionsLink(row) {
+    const href = `options.html?ticker=${encodeURIComponent(row.ticker)}`;
+    return `<section class="glass dimblock">
+      <header class="dimhead">
+        <span class="dimico">${icon("zap")}</span>
+        <div class="dimtitle">
+          <h2>${t("co.options.title")}<em>OPTIONS</em></h2>
+          <p>${t("co.options.lede")}</p>
+        </div>
+        <div class="dimmeta">
+          <a class="btn btn--quiet" href="${href}">${t("co.options.open")}</a>
+        </div>
+      </header>
+    </section>`;
+  }
+
+  /* ------------------------------------------------- quarterly EPS, last 4 */
+  /* Quarterly, not annual, because the adjustments are period-specific: Alphabet's
+     equity-security gains run from $1.3bn to $99bn across six consecutive
+     quarters, so a year of adjustments divided by a year of shares describes no
+     period a reader can act on. Each card expands to its own bridge. */
+  function quarterCard(q, index) {
+    const adjusted = q.adjusted_eps;
+    const gaap = q.gaap_eps;
+    const gap = (adjusted !== null && adjusted !== undefined && gaap)
+      ? adjusted - gaap : null;
+    const tone = gap === null ? "" : gap > 0.005 ? " is-up" : gap < -0.005 ? " is-down" : "";
+    const surprise = q.surprise_pct;
+    const lines = (q.lines || []).map((line) => `<tr>
+      <td>${line.value < 0 ? "−" : "+"} ${escapeHtml(line.label)}</td>
+      <td class="right mono">${money(Math.abs(line.value))}</td>
+    </tr>`).join("");
+    const missing = (q.missing || []).length
+      ? `<p class="hint">${escapeHtml(t("co.eps.notDisclosed", { items: q.missing.join(" · ") }))}</p>`
+      : "";
+    // A filer that does not tag its quarters has nothing to bridge. That is a
+    // different statement from "nothing was adjusted", so it is said in words
+    // rather than rendered as an empty table.
+    const sourcedFromAnalyst = q.source === "analyst";
+    const body = sourcedFromAnalyst
+      ? `<p class="hint">${escapeHtml(t("co.eps.analystOnly"))}</p>`
+      : `<div class="dimtable tablewrap tablewrap--flat">
+          <table class="data">
+            <tbody>
+              <tr class="is-total"><td>${t("co.eps.netIncome")}</td>
+                <td class="right mono">${q.net_income === null || q.net_income === undefined ? DASH : money(q.net_income)}</td></tr>
+              ${lines || `<tr><td colspan="2" class="hint">${t("co.eps.noAdjust")}</td></tr>`}
+              <tr class="is-total"><td>${t("co.eps.adjustedIncome")}</td>
+                <td class="right mono">${q.adjusted_net_income === null || q.adjusted_net_income === undefined ? DASH : money(q.adjusted_net_income)}</td></tr>
+              <tr><td>${t("co.bridge.shares")}</td>
+                <td class="right mono">${q.diluted_shares ? FR.fmt(q.diluted_shares, 0) : DASH}</td></tr>
+              <tr><td>${t("co.eps.taxRate")}</td>
+                <td class="right mono">${q.effective_tax_rate === null || q.effective_tax_rate === undefined
+                  ? DASH : `${(q.effective_tax_rate * 100).toFixed(1)}%`}</td></tr>
+              <tr class="is-total is-accent"><td>${t("co.bridge.adjustedEps")}</td>
+                <td class="right mono">${num(adjusted, 2)}</td></tr>
+            </tbody>
+          </table>
+        </div>
+        ${missing}`;
+
+    return `<details class="epsq${tone}" ${index === 0 ? "open" : ""}>
+      <summary>
+        <span class="epsq-head">
+          <b class="epsq-label">${escapeHtml(q.label)}</b>
+          ${sourcedFromAnalyst ? `<span class="ptag tone-mid">${t("co.eps.reportedOnly")}</span>` : ""}
+          ${q.surprise_pct === null || q.surprise_pct === undefined ? ""
+            : `<span class="ptag ${q.surprise_pct >= 0 ? "tone-good" : "tone-low"}">${
+                q.surprise_pct >= 0 ? t("co.eps.beat") : t("co.eps.miss")}
+                ${(q.surprise_pct * 100).toFixed(1)}%</span>`}
+        </span>
+        <span class="epsq-figs">
+          <span class="epsq-fig"><i>${t("co.eps.gaap")}</i><b class="mono">${num(gaap, 2)}</b></span>
+          <span class="epsq-fig epsq-fig--adj"><i>${t("co.eps.nonGaap")}</i>
+            <b class="mono">${num(adjusted, 2)}</b></span>
+          ${q.consensus_eps === null || q.consensus_eps === undefined ? "" : `
+            <span class="epsq-fig epsq-fig--cons"><i>${t("co.eps.consensusShort")}</i>
+              <b class="mono">${num(q.consensus_eps, 2)}</b></span>`}
+          ${gap === null ? "" : `<span class="epsq-gap">${gap >= 0 ? "+" : ""}${gap.toFixed(2)}</span>`}
+        </span>
+      </summary>
+      <div class="epsq-body">
+        <p class="hint">${escapeHtml(t("co.eps.period", { span: q.fiscal_label || q.end }))}</p>
+        ${basisNote(q)}
+        ${body}
+      </div>
+    </details>`;
+  }
+
+  /* The three figures above are on *different* bases, so stating them side by side
+     invites the reading that GAAP was compared with the consensus. It was not.
+     This says which two figures the beat/miss used, and — when the filer's own
+     adjusted figure diverges from them — how the three relate. */
+  function basisNote(q) {
+    if (q.consensus_eps === null || q.consensus_eps === undefined
+        || q.surprise_actual === null || q.surprise_actual === undefined) {
+      return "";
+    }
+    const adjustedBasis = q.surprise_basis === "adjusted";
+    const lines = [
+      `<p class="hint">${escapeHtml(t(
+        adjustedBasis ? "co.eps.basisAdjusted" : "co.eps.basisGaap", {
+          actual: num(q.surprise_actual, 2), estimate: num(q.consensus_eps, 2),
+        }))}</p>`,
+    ];
+    if (q.surprise_mixed_basis) {
+      lines.push(`<p class="hint epsq-warn">${escapeHtml(t("co.eps.mixedBasis", {
+        adjusted: num(q.adjusted_eps, 2), consensus: num(q.consensus_eps, 2),
+      }))}</p>`);
+    }
+    return lines.join("");
+  }
+
+  function quarterBlock(payload) {
+    const quarters = (payload && payload.quarters) || [];
+    if (!payload || !payload.available) {
+      return `<section class="glass dimblock">
+        <header class="dimhead">
+          <span class="dimico">${icon("clock")}</span>
+          <div class="dimtitle">
+            <h2>${t("co.eps.title")}<em>${t("co.eps.subtitle")}</em></h2>
+            <p>${t("co.eps.lede")}</p>
+          </div>
+        </header>
+        <p class="hint">${escapeHtml((payload && payload.note) || t("co.eps.none"))}</p>
+      </section>`;
+    }
+
+    const series = quarters.slice().reverse();   // oldest first for reading order
+    return `<section class="glass dimblock">
+      <header class="dimhead">
+        <span class="dimico">${icon("clock")}</span>
+        <div class="dimtitle">
+          <h2>${t("co.eps.title")}<em>${t("co.eps.subtitle")}</em></h2>
+          <p>${t("co.eps.lede")}</p>
+        </div>
+        <div class="dimmeta">
+          <span class="ptag tone-good">${t("co.bridge.quarterTag")}</span>
+          <span class="badge">${escapeHtml(t("co.eps.count", { n: quarters.length }))}</span>
+        </div>
+      </header>
+      <div class="epsgrid">${series.map((q, i) => quarterCard(q, i)).join("")}</div>
+      <p class="hint" style="margin-top:12px">${escapeHtml(t("co.eps.foot"))}</p>
+    </section>`;
+  }
+
+  let quarterToken = 0;
+
+  async function mountQuarters(ticker) {
+    const host = $("#quarterSection");
+    if (!host) return;
+    const token = ++quarterToken;
+    try {
+      const payload = await api.eps(ticker, 4);
+      if (token !== quarterToken) return;
+      host.innerHTML = quarterBlock(payload);
+    } catch (err) {
+      if (token !== quarterToken) return;
+      host.innerHTML = "";
+      console.warn("quarterly EPS fetch failed", err);
+    }
+  }
+
+  /* ------------------------------------------------------- record mount */
+  /* Fetched separately, like the analyst panel, so a slow SEC fetch never delays
+     the scored comparison above it. A skeleton shows while it loads, and a
+     failure removes the section rather than leaving an empty frame. */
+  let recordToken = 0;
+
+  async function mountRecord(ticker) {
+    const host = $("#recordSection");
+    if (!host) return;
+    const token = ++recordToken;
+    host.innerHTML = `<section class="glass dimblock">
+      <div class="skeleton line" style="width:22%"></div>
+      <div class="skeleton" style="height:120px;margin-top:16px"></div></section>`;
+    try {
+      const record = await api.record(ticker);
+      if (token !== recordToken) return;      // a newer company is already loading
+      host.innerHTML = recordBlock(record);
+    } catch (err) {
+      if (token !== recordToken) return;
+      host.innerHTML = "";
+      console.warn("record fetch failed", err);
+    }
+  }
+
   /* ------------------------------------------------------------------ render */
   function render(row, { rankedNeighbours = [] } = {}) {
     const rank = row.rank;
@@ -473,6 +663,9 @@ const FRCompany = (() => {
       </div>
       ${scoreRail(row)}
       ${DIMENSIONS.map((d) => dimensionBlock(row, d)).join("")}
+      <div id="quarterSection" aria-live="polite"></div>
+      <div id="recordSection" aria-live="polite"></div>
+      ${optionsLink(row)}
       <div id="analystSection" aria-live="polite"></div>
       ${inputBlock(row)}
       ${provenanceBlock(row)}`;
@@ -617,6 +810,8 @@ const FRCompany = (() => {
       // The analyst section is enrichment, fetched separately so a slow or
       // unavailable endpoint never delays the scored comparison above it.
       if (typeof FRAnalyst !== "undefined") FRAnalyst.mount(row.ticker);
+      mountQuarters(row.ticker);
+      mountRecord(row.ticker);
       const copy = $("#copyDetail");
       // keep the column rhythm correct when the breakpoint changes
       const onResize = FR.debounce(() => {
@@ -650,5 +845,9 @@ const FRCompany = (() => {
   return {
     mount, render, relabel, ensureCatalog, DIMENSIONS, INPUT_GROUPS, Z_SUFFIX,
     peerMedian, withinGroupRank, fmt, toTsv,
+    // Exposed so a test can drive the quarterly renderer with a real server
+    // payload. A fixture cannot catch a payload shape the renderer mis-handles,
+    // which is exactly how one ticker renders while another comes up blank.
+    quarterBlock, quarterCard,
   };
 })();

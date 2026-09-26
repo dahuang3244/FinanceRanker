@@ -1,0 +1,321 @@
+/* ==========================================================================
+   Options environment page.
+   Reuses the board/table styling from the rest of the app; only the pieces that
+   are specific to reading a chain live here.
+
+   Spacing and radius follow the app's own scale (--r-sm 12px, --r-md 18px)
+   rather than fixed pixel values, so the page tracks the shell if that scale
+   changes.
+   ========================================================================== */
+
+.op-block { margin-top: 18px; padding: 22px 24px; }
+.op-block--note { border-left: 3px solid var(--mid); }
+
+.op-h2 {
+  margin: 0 0 6px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink);
+  letter-spacing: 0.01em;
+}
+
+.op-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-top: 6px;
+}
+.op-ticker { margin: 0; font-size: 26px; letter-spacing: -0.02em; }
+.op-spot { font-size: 19px; color: var(--ink-2); margin-left: 12px; font-weight: 400; }
+.op-headright { display: flex; gap: 8px; align-items: center; }
+
+/* tabs reuse the .seg control from the shell, only the spacing differs */
+.op-tabs { margin: 18px 0 0; }
+.op-section { margin-top: 2px; }
+
+/* metric tiles */
+.op-board {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(172px, 1fr));
+  gap: 12px;
+}
+.op-board--tight { grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); }
+.op-tile {
+  padding: 16px 18px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--hair);
+  background: var(--well);
+  box-shadow: var(--sh-sm);
+}
+.op-tile .k { font-size: 10.5px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+.op-tile .v { font-size: 23px; margin-top: 6px; letter-spacing: -0.02em; }
+.op-tile .d { font-size: 11px; color: var(--muted); margin-top: 3px; }
+.op-tile.is-warn { border-color: rgba(156, 106, 73, 0.35); background: var(--low-soft); }
+.op-tile.is-good { border-color: rgba(79, 107, 70, 0.3); background: var(--good-soft); }
+
+/* call/put split bars */
+.op-split {
+  display: inline-flex;
+  width: 100%;
+  max-width: 260px;
+  height: 10px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--well);
+  border: 1px solid var(--hair);
+  vertical-align: middle;
+}
+.op-split i { display: block; height: 100%; }
+.op-split i.call { background: var(--good); }
+.op-split i.put { background: var(--low); }
+
+/* concentration weight bar */
+.op-weight {
+  display: block;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--well);
+  border: 1px solid var(--hair);
+  overflow: hidden;
+}
+.op-weight i { display: block; height: 100%; background: var(--accent); opacity: 0.65; }
+
+/* expiry cards */
+.op-expirycard {
+  margin-top: 12px;
+  padding: 14px 16px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--hair);
+  background: rgba(255, 253, 249, 0.6);
+}
+.op-expiryhead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+.op-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.op-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--hair);
+  background: var(--well);
+  font-size: 11px;
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+.op-chip b { font-family: var(--mono); font-weight: 600; }
+.op-chip--directional_call { color: var(--good); background: var(--good-soft); border-color: rgba(79, 107, 70, 0.24); }
+.op-chip--upside_call { color: var(--good); border-color: rgba(79, 107, 70, 0.2); }
+.op-chip--directional_put { color: var(--mid); background: var(--mid-soft); border-color: rgba(160, 117, 44, 0.24); }
+.op-chip--downside_put { color: var(--low); background: var(--low-soft); border-color: rgba(156, 106, 73, 0.24); }
+.op-chip--deep_put { color: var(--low); border-color: rgba(156, 106, 73, 0.2); }
+.op-chip--deep_call { color: var(--muted); }
+
+/* thresholds */
+.op-threshgrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 12px;
+}
+.op-thresh {
+  padding: 14px 16px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--hair);
+  background: var(--well);
+}
+.op-thresh.is-breached {
+  border-color: rgba(156, 106, 73, 0.4);
+  background: var(--low-soft);
+}
+.op-threshhead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 4px;
+}
+.op-threshbar {
+  position: relative;
+  display: block;
+  height: 10px;
+  margin: 12px 0 8px;
+  border-radius: 999px;
+  background: var(--surface);
+  border: 1px solid var(--hair);
+  overflow: hidden;
+}
+.op-threshbar i {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, var(--good), var(--mid));
+}
+.op-thresh.is-breached .op-threshbar i { background: linear-gradient(90deg, var(--mid), var(--low)); }
+/* the trigger line, drawn where the condition flips */
+.op-threshbar em {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  width: 2px;
+  background: var(--ink-2);
+  opacity: 0.55;
+}
+.op-threshfoot {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+/* personal analysis */
+.op-anhead {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+.op-stance { font-size: 11.5px; }
+.op-judgement {
+  padding: 12px 16px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--hair);
+  background: var(--well);
+  margin-bottom: 12px;
+}
+.op-judgement p { margin: 0; font-size: 12.5px; line-height: 1.7; color: var(--ink-2); }
+
+/* the three question boxes */
+.op-questions {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 10px;
+}
+.op-q {
+  padding: 12px 14px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--hair);
+  background: var(--well);
+}
+.op-q .k {
+  display: block;
+  font-size: 11px;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+.op-q .d { display: block; font-size: 10.5px; color: var(--faint); margin-top: 8px; line-height: 1.5; }
+.op-q-answer { font-size: 20px; letter-spacing: -0.01em; }
+
+/* the next dated event: invisible in volume and open interest, so it is stated */
+.op-catalyst {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+  padding: 12px 16px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--hair);
+  background: var(--well);
+}
+.op-catalyst.is-soon { border-color: rgba(156, 106, 73, 0.38); background: var(--low-soft); }
+.op-catalyst-k {
+  font-size: 10.5px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.op-catalyst b { font-size: 14px; }
+.op-catalyst .d { flex-basis: 100%; font-size: 11px; color: var(--muted); line-height: 1.5; }
+
+/* 1..5 score, drawn as dots so the scale is visible at a glance */
+.op-stars { display: inline-flex; align-items: center; gap: 5px; }
+.op-stars i {
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: var(--well);
+  border: 1px solid var(--hair);
+}
+.op-stars i.on { background: var(--accent); border-color: var(--accent); }
+.op-stars b { font-family: var(--mono); font-size: 12.5px; margin-left: 6px; color: var(--ink-2); }
+
+/* two side-by-side claim cards */
+.op-two {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 12px;
+  margin-top: 14px;
+}
+.op-claim {
+  padding: 16px 18px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--hair);
+  background: var(--glass, rgba(255, 253, 249, 0.7));
+}
+.op-claimhead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.op-claimhead b { font-size: 12.5px; }
+.op-claim p { margin: 0; font-size: 12px; line-height: 1.7; color: var(--ink-2); }
+
+/* premium flow bars, sized so the money is comparable, not just the ratio */
+.op-premium { margin-top: 12px; display: grid; gap: 6px; }
+.op-premiumrow {
+  display: grid;
+  grid-template-columns: 92px 1fr auto;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+}
+.op-premiumrow em { font-style: normal; color: var(--muted); }
+.op-premiumrow i {
+  display: block;
+  height: 8px;
+  border-radius: 999px;
+  min-width: 2px;
+}
+.op-premiumrow i.call { background: var(--good); }
+.op-premiumrow i.put { background: var(--low); }
+.op-premiumrow b { font-size: 11.5px; color: var(--ink-2); }
+
+.op-readers {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 12px;
+}
+.op-reader {
+  padding: 12px 14px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--hair);
+  background: var(--well);
+}
+.op-reader b { font-size: 12.5px; }
+.op-reader p { margin: 6px 0 0; font-size: 12px; line-height: 1.55; color: var(--ink-2); }
+
+/* dealer gamma exposure: a bar so concentration is visible at a glance */
+.op-gexbar {
+  display: block;
+  width: 100%;
+  max-width: 160px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--good-soft);
+  overflow: hidden;
+}
+.op-gexbar i { display: block; height: 100%; background: var(--good); border-radius: 999px; }
+.op-gexbar.is-neg { background: var(--low-soft); }
+.op-gexbar.is-neg i { background: var(--low); }
+.as-note-inline { margin-top: 10px; font-size: 11px; }

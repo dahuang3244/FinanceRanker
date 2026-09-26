@@ -302,29 +302,73 @@
 
   function drawSpark(bars) {
     const svg = $("#pvSpark");
-    const closes = bars.map((b) => b.close).filter((c) => c !== null && c !== undefined);
+    const yAxis = $("#pvSparkY");
+    const xAxis = $("#pvSparkX");
+    const usable = bars.filter((b) => b && b.close !== null && b.close !== undefined);
     $("#pvSparkNote").textContent = bars.length
       ? `${bars[0].d} → ${bars[bars.length - 1].d} · ${bars.length} ${t("pv.tradingDays")}`
       : t("pv.noPrice");
-    if (closes.length < 2) { svg.innerHTML = ""; return; }
+    if (usable.length < 2) {
+      svg.innerHTML = "";
+      if (yAxis) yAxis.innerHTML = "";
+      if (xAxis) xAxis.innerHTML = "";
+      svg.removeAttribute("aria-label");
+      return;
+    }
 
-    // The chart is now a full-width row, so match the viewBox to the rendered
-    // box (non-uniform scale stretches the stroke otherwise).
-    const W = Math.max(320, Math.round(svg.clientWidth || 600));
-    const H = Math.round(svg.clientHeight || 130);
-    const min = Math.min(...closes), max = Math.max(...closes), span = max - min || 1;
-    const pad = 8;
-    const pts = closes.map((c, i) => {
-      const x = (i / (closes.length - 1)) * (W - pad * 2) + pad;
-      const y = H - pad - ((c - min) / span) * (H - pad * 2);
-      return `${x.toFixed(1)},${y.toFixed(1)}`;
-    });
+    // Fixed viewBox: the plot stretches horizontally to fill the row, so only
+    // the geometry is scaled — the axis values are HTML in the gutters beside
+    // and below, where they stay legible.
+    const W = 1000, H = 150, padTop = 10, padBottom = 10;
+    const closes = usable.map((b) => b.close);
+    const min = Math.min(...closes), max = Math.max(...closes);
+    const span = max - min || Math.max(1, Math.abs(max) * 0.01);
+    // A flat series still gets a sane band instead of a hairline at the top.
+    const lo = min - span * 0.02, hi = max + span * 0.02;
+    const plotH = H - padTop - padBottom;
+    const y = (c) => padTop + (1 - (c - lo) / (hi - lo)) * plotH;
+
+    // Position by DATE, not by index: a holiday, a suspension or a gap in the
+    // series would otherwise be drawn as ordinary elapsed time.
+    const t0 = Date.parse(usable[0].d);
+    const t1 = Date.parse(usable[usable.length - 1].d);
+    const spanMs = t1 - t0 || 1;
+    const x = (d) => ((Date.parse(d) - t0) / spanMs) * W;
+
+    const pts = usable.map((b) => `${x(b.d).toFixed(2)},${y(b.close).toFixed(2)}`);
     const up = closes[closes.length - 1] >= closes[0];
     const stroke = up ? "var(--good)" : "var(--low)";
+
+    // Gridlines at the labelled values, so a reader can read a level off the
+    // curve without hovering.
+    const ticks = [hi, (hi + lo) / 2, lo];
+    const grid = ticks.map((v) => `<line x1="0" y1="${y(v).toFixed(2)}"
+      x2="${W}" y2="${y(v).toFixed(2)}" class="grid" />`).join("");
+
     svg.innerHTML = `
-      <polyline class="area" points="${pts.join(" ")} ${W - pad},${H} ${pad},${H}"
+      ${grid}
+      <polyline class="area" points="${pts.join(" ")} ${W},${H} 0,${H}"
         fill="${stroke}" opacity="0.10" />
       <polyline class="line" points="${pts.join(" ")}" stroke="${stroke}" />`;
+    svg.setAttribute(
+      "aria-label",
+      `${t("pv.spark")}: ${t("pv.stat.low")} ${min.toFixed(2)} → ${t("pv.stat.high")} ${max.toFixed(2)}`,
+    );
+
+    // Y-axis: the same values the gridlines sit on.
+    if (yAxis) {
+      yAxis.innerHTML = ticks.map((v, i) => `<span style="top:${
+        (y(v) / H * 100).toFixed(2)}%" class="${i === 0 ? "hi" : i === ticks.length - 1 ? "lo" : "mid"}">${
+        money(v)}</span>`).join("");
+    }
+    // X-axis: start, middle and end dates.
+    if (xAxis) {
+      const mid = usable[Math.floor(usable.length / 2)].d;
+      const short = (d) => String(d).slice(2, 7).replace("-", "/");
+      xAxis.innerHTML = `<span>${escapeHtml(short(usable[0].d))}</span>
+        <span class="mid">${escapeHtml(short(mid))}</span>
+        <span>${escapeHtml(short(usable[usable.length - 1].d))}</span>`;
+    }
   }
 
   /* ------------------------------------------------------------ parameters */

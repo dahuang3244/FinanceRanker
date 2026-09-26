@@ -169,6 +169,39 @@
     }).join("");
   }
 
+  /* --------------------------------------------------------- risk-free rate */
+  /* The reference every return is judged against. Fetched separately from the
+     ranking, because a Treasury outage must not delay the peer comparison. */
+  const TENOR_ORDER = ["1m", "3m", "6m", "1y", "2y", "5y", "7y", "10y", "20y", "30y"];
+
+  function renderRates() {
+    const host = $("#ratesBody");
+    if (!host) return;
+    const curve = state.rates;
+    if (!curve || !Object.keys(curve).length) {
+      host.innerHTML = `<p class="hint">${t("ov.rates.offline")}</p>`;
+      return;
+    }
+    const spread = curve.spread_10y_2y;
+    const inverted = spread !== undefined && spread !== null && spread < 0;
+    host.innerHTML = `
+      <div class="ratesrow">${
+        TENOR_ORDER.filter((k) => curve[k] !== undefined).map((k) => `
+          <div class="ratetile${k === "10y" ? " is-key" : ""}">
+            <span class="k">${escapeHtml(k.toUpperCase())}</span>
+            <span class="v mono">${Number(curve[k]).toFixed(2)}%</span>
+          </div>`).join("")}
+      </div>
+      <div class="ratesmeta">
+        ${spread === undefined || spread === null ? "" : `
+          <span class="ptag ${inverted ? "tone-low" : "tone-good"}">${
+            t("ov.rates.spread", { v: spread.toFixed(2) })}</span>`}
+        ${inverted ? `<span class="ptag tone-low">${t("ov.rates.inverted")}</span>` : ""}
+        <span class="spacer"></span>
+        <span class="faint">${t("ov.rates.asof", { d: escapeHtml(String(curve.date || "")) })}</span>
+      </div>`;
+  }
+
   /* -------------------------------------------------------------- assemble */
   async function load({ fresh = false } = {}) {
     const rank = await api.ranking({});
@@ -240,6 +273,16 @@
       state.rows = [];
       renderMatrix();
     }
+
+    // The risk-free curve is enrichment: fetched after the ranking so a Treasury
+    // outage never delays or blanks the peer comparison.
+    try {
+      const rates = await api.rates();
+      state.rates = rates.curve || null;
+    } catch (err) {
+      state.rates = null;
+    }
+    renderRates();
 
     // re-render every dynamic block on a language flip
     document.addEventListener("fr:lang", () => {

@@ -26,7 +26,15 @@ FIELDS = {
     "equity": ("StockholdersEquity",),
     "cash": ("CashAndCashEquivalents",),
     "debt_long": ("LongTermDebt",),
-    "depreciation_amortization": ("DepreciationAndAmortizationInCashFlow",),
+    # Yahoo's timeSeries field is `DepreciationAndAmortization`; the older
+    # `...InCashFlow` name 404s, which silently cost every Yahoo-primary ticker its
+    # EBITDA and, with it, EV/EBITDA and net-debt/EBITDA. The aliases after it are
+    # accepted in case the naming differs by statement version.
+    "depreciation_amortization": (
+        "DepreciationAndAmortization",
+        "DepreciationAmortizationDepletion",
+        "ReconciledDepreciation",
+    ),
     "sbc": ("StockBasedCompensation",),
     "tax_provision": ("TaxProvision",),
     "pretax_income": ("PretaxIncome",),

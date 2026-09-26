@@ -221,10 +221,368 @@ class Fundamentals(BaseModel):
     pretax_income: FactSeries | None = None
     debt_current: FactSeries | None = None
     debt_long: FactSeries | None = None
+    # Non-GAAP bridge inputs — whatever the filer actually tags. Absent means
+    # "not disclosed", which the reconciliation reports as unavailable rather
+    # than treating it as zero.
+    equity_securities_gain: FactSeries | None = None
+    other_nonoperating_income: FactSeries | None = None
+    legal_settlement: FactSeries | None = None
+    impairment: FactSeries | None = None
+    acquisition_costs: FactSeries | None = None
+    debt_extinguishment: FactSeries | None = None
+    discontinued_operations: FactSeries | None = None
 
     @property
     def is_usable(self) -> bool:
         return self.revenue is not None and self.operating_income is not None
+
+
+class NonGaapLine(BaseModel):
+    """One row of a company's GAAP-to-adjusted reconciliation.
+
+    Annual figures stay in the reporting currency: dividing every add-back by
+    the share count is what the per-share bridge already does, and doing it twice
+    invites the two from disagreeing. `is_addback` says which direction the line
+    moves adjusted income.
+    """
+
+    key: str
+    label: str
+    value: float | None = None
+    is_addback: bool = True
+    source: str = ""
+
+
+class NonGaapReconciliation(BaseModel):
+    """A workbook-style bridge: GAAP income -> adjusted income -> adjusted EPS.
+
+    Filers do not tag a comparable "non-GAAP EPS". Each discloses its own
+    adjustments, so this carries the lines a company actually reported and names
+    the ones it did not, instead of silently treating those as zero — which
+    would present an untagged figure as though the company had endorsed it.
+
+    `period` is not decoration. A quarterly bridge and an annual one measure
+    different things, and a reader cannot tell them apart from the numbers:
+    Alphabet's equity-security gains run from $1.3bn to $99bn across six
+    consecutive quarters, so an annual bridge averages periods with nothing in
+    common. Every bridge therefore states the basis it was built on.
+    """
+
+    currency: str = ""
+    tax_rate: float | None = None
+    lines: list[NonGaapLine] = Field(default_factory=list)
+    missing: list[str] = Field(default_factory=list)
+    gaap_net_income: float | None = None
+    adjusted_net_income: float | None = None
+    diluted_shares: float | None = None
+    gaap_eps: float | None = None
+    adjusted_eps: float | None = None
+    basis: str = ""
+    eps_basis: str = ""
+    complete_years: int = 0
+    # "annual" | "quarter" — always populated, so the UI can label the figure.
+    period: str = "annual"
+    period_label: str = ""       # e.g. "2026 Q2"
+    period_span: str = ""        # e.g. "2026-04-01 → 2026-06-30"
+
+
+class QuarterPoint(BaseModel):
+    """One quarter of the per-share series, for a chart."""
+
+    label: str
+    gaap_eps: float | None = None
+    adjusted_eps: float | None = None
+    revenue: float | None = None
+    end: str = ""
+
+
+class QuarterlyEps(BaseModel):
+    """One quarter's GAAP and adjusted EPS, with the bridge that produced it.
+
+    Quarterly rather than annual because the adjustments are period-specific. Each
+    quarter carries its own lines, tax rate and share count, so the figure
+    describes a period a reader can act on rather than an average of several.
+    """
+
+    label: str = ""              # "2026 Q2"
+    start: str = ""
+    end: str = ""
+    fiscal_label: str = ""
+    gaap_eps: float | None = None
+    adjusted_eps: float | None = None
+    net_income: float | None = None
+    adjusted_net_income: float | None = None
+    revenue: float | None = None
+    diluted_shares: float | None = None
+    effective_tax_rate: float | None = None
+    lines: list[NonGaapLine] = Field(default_factory=list)
+    missing: list[str] = Field(default_factory=list)
+    has_adjustments: bool = False
+    # Where this quarter came from: "sec" carries a full bridge, "analyst" carries
+    # a reported EPS and consensus but no adjustment lines, because a foreign
+    # private issuer's adjustments are not machine-readable.
+    source: str = "sec"
+    # Filled from the analyst feed where available, so the table can show what the
+    # quarter was measured against rather than the actual alone.
+    consensus_eps: float | None = None
+    surprise_pct: float | None = None
+    # The actual the surprise was computed from, and the basis both sides share.
+    # A beat is only meaningful when the actual and the consensus are the same
+    # measure; comparing a GAAP actual against a consensus that analysts forecast
+    # on an adjusted basis produces nonsense.
+    surprise_actual: float | None = None
+    # Which of this row's two figures the consensus was compared against:
+    # "adjusted" or "gaap". Analysts forecast a non-GAAP number, so the consensus
+    # must be compared with the adjusted figure whenever the two differ materially;
+    # comparing it with GAAP measures the gap between two definitions rather than
+    # the gap between a result and a forecast.
+    surprise_basis: str = ""
+    # True when the reported actual and the consensus do not look like the same
+    # measure. Kept as a warning for the case where even the adjusted figure is far
+    # from the consensus, which points at a definition this site does not capture.
+    surprise_mixed_basis: bool = False
+
+
+class OptionsContract(BaseModel):
+    """One listed contract.
+
+    Greeks come from the CBOE feed, which publishes them. The Yahoo chain reports
+    none, and its `implied_volatility` is placeholder data (1e-5 or exactly 0.5),
+    so on that source volatility had to be inverted from last-traded prices. Both
+    are carried here; the presence of `implied_volatility` does not by itself say
+    which source produced it — the chain's `source` does.
+    """
+
+    kind: str                       # "call" | "put"
+    strike: float
+    expiration: date
+    volume: float | None = None
+    open_interest: float | None = None
+    last_price: float | None = None
+    change: float | None = None
+    bid: float | None = None
+    ask: float | None = None
+    implied_volatility: float | None = None
+    # Reported by CBOE; absent on the Yahoo chain.
+    delta: float | None = None
+    gamma: float | None = None
+    vega: float | None = None
+    theta: float | None = None
+    rho: float | None = None
+    in_the_money: bool = False
+    contract_symbol: str = ""
+
+
+class OptionsExpiry(BaseModel):
+    """One expiry's calls and puts."""
+
+    expiration: date
+    calls: list[OptionsContract] = Field(default_factory=list)
+    puts: list[OptionsContract] = Field(default_factory=list)
+
+
+class OptionsExpirySummary(BaseModel):
+    """Per-expiry put/call and positioning figures."""
+
+    expiration: str
+    days: int = 0
+    call_volume: int = 0
+    put_volume: int = 0
+    call_oi: int = 0
+    put_oi: int = 0
+    volume_pcr: float | None = None
+    oi_pcr: float | None = None
+    max_pain: float | None = None
+    straddle_move: float | None = None
+    buckets: dict[str, int] = Field(default_factory=dict)
+
+
+class OptionsChain(BaseModel):
+    """Raw chain as fetched, before any interpretation."""
+
+    ticker: str
+    currency: str = "USD"
+    spot: float | None = None
+    as_of: datetime | None = None
+    source: str = ""
+    expiries_available: int = 0
+    expiries: list[OptionsExpiry] = Field(default_factory=list)
+    # Published by CBOE for the underlying, so IV/RV needs no inversion.
+    iv30: float | None = None
+    # The source's own terms, carried with the data rather than left implicit.
+    compliance: str = ""
+    # True when the chain reports Greeks, which decides whether a dealer-gamma
+    # figure is measurable or would have to be assumed.
+    has_greeks: bool = False
+
+
+class OptionsVerdict(BaseModel):
+    """The plain-language judgement the analysis tab leads with.
+
+    Every field traces to volume or open interest. There is deliberately no
+    volatility-regime field: the free chain's IV is placeholder data, so a
+    "volatility is cheap" verdict would be invented rather than measured.
+    """
+
+    stance: str = ""                 # defensive | bullish | balanced
+    stance_label: str = ""
+    # A semantic key for the lean, so the UI can name it in either language.
+    # `lean` remains as the API-level English fallback.
+    lean_key: str = ""
+    lean: str = ""
+    novelty: str = ""                # new_defensive | new_bullish | aligned
+    novelty_label: str = ""
+    flow_gap: float | None = None
+    chase_safety: int | None = None      # 1..5, from stated quantities
+    put_value: int | None = None         # 1..5
+    wait: str = ""                       # yes | no | expired
+    max_pain_distance: float | None = None
+    concentration_ratio: float | None = None
+    concentration_label: str = ""
+    # The next dated event, and whether it falls inside the reference expiry. An
+    # earnings date within the option's life dominates a short-dated position and
+    # is invisible in volume and open interest.
+    next_earnings: str | None = None
+    days_to_earnings: int | None = None
+    earnings_in_window: bool = False
+
+
+class OptionsVolatility(BaseModel):
+    """Implied and realised volatility for the threshold tab.
+
+    `basis` records where each side came from, because the two are different in
+    kind: implied is forward-looking and inverted from traded prices, realised is
+    backward-looking and measured from returns.
+    """
+
+    iv_atm: float | None = None
+    iv_call: float | None = None
+    iv_put: float | None = None
+    rv_21d: float | None = None
+    iv_rv: float | None = None
+    iv_rank: float | None = None
+    skew_points: float | None = None
+    skew: dict = Field(default_factory=dict)
+    expiry: str | None = None
+    # How far out the reference expiry actually is, and how far apart the two
+    # at-the-money legs inverted. Both are surfaced so a reader can judge the
+    # reading rather than having to trust it.
+    expiry_days: float | None = None
+    leg_gap: float | None = None
+    iv_note: str = ""
+    basis: str = ""
+    # "published iv30" when the source reports an implied vol, "inverted" when it
+    # had to be recovered from traded prices.
+    iv_source: str = ""
+
+
+class OptionsSnapshot(BaseModel):
+    """Computed options view for one ticker.
+
+    Positioning from volume and open interest, plus volatility inverted from
+    each contract's traded price. The chain's own `impliedVolatility` field is
+    never read: it is placeholder data, so a volatility figure taken from it would
+    be invented rather than measured.
+    """
+
+    ticker: str
+    spot: float | None = None
+    currency: str = "USD"
+    as_of: datetime | None = None
+    source: str = ""
+    expiries_available: int = 0
+    expiries_used: int = 0
+    summaries: list[OptionsExpirySummary] = Field(default_factory=list)
+    totals: dict[str, float | None] = Field(default_factory=dict)
+    max_pain: float | None = None
+    max_pain_expiry: str | None = None
+    straddle_move: float | None = None
+    concentration: list[dict] = Field(default_factory=list)
+    unusual: list[dict] = Field(default_factory=list)
+    # Traded contracts with no open interest yet: new positions, reported
+    # separately because they have no book to form a ratio against.
+    new_positions: list[dict] = Field(default_factory=list)
+    # The next dated release, when known. It is the one catalyst invisible in
+    # volume and open interest, so the verdict states it and flags it when it
+    # falls inside the reference expiry.
+    next_earnings: str | None = None
+    # Dealer gamma exposure, only where the source reports Greeks. `gex_basis`
+    # states the sign convention, because dealer positioning is not observable
+    # and the figure is a convention rather than a measurement.
+    gex: float | None = None
+    gamma_flip: float | None = None
+    gex_strikes: list[dict] = Field(default_factory=list)
+    gex_basis: str = ""
+    # The source's own terms, carried with the data rather than left implicit.
+    compliance: str = ""
+    verdict: OptionsVerdict = Field(default_factory=OptionsVerdict)
+    volatility: OptionsVolatility = Field(default_factory=OptionsVolatility)
+    notes: list[str] = Field(default_factory=list)
+
+
+class CompanyEvent(BaseModel):
+    """A dated corporate event, read from a filing index rather than prose.
+
+    The item codes are the fact and the label is what that code means. Nothing
+    here describes the *content* of the filing, because only the index is read —
+    the event is reported as "material agreement, filed 2026-09-03", which is a
+    verifiable claim, rather than a summary that would not be.
+    """
+
+    date: date
+    form: str = "8-K"
+    items: list[str] = Field(default_factory=list)
+    labels: list[str] = Field(default_factory=list)
+    kind: str = "other"          # management | acquisition | strategic | results | other
+    is_routine: bool = False
+    url: str = ""
+
+
+class Milestone(BaseModel):
+    """One dated point on a company's record.
+
+    `source` says where it came from, and that distinction is kept: a filing date
+    is a fact, an analyst action is a third-party opinion, a headline is
+    unverified. A table that mixed them without saying which was which would
+    invite a reader to trust a rumour as much as an 8-K.
+    """
+
+    date: date
+    kind: str = "other"          # agreement | acquisition | management | obligation | ...
+    title: str = ""
+    detail: str = ""
+    source: str = "sec-8k"
+    url: str = ""
+
+
+class CatalystRow(BaseModel):
+    """One dated item that could move the stock.
+
+    `status` distinguishes a scheduled event from one already filed, and stays
+    honest about the third case: whether a filed event *worked* is not something a
+    filing index can say.
+    """
+
+    date: date
+    period: str = ""
+    title: str = ""
+    watch: str = ""
+    key_figures: str = ""
+    status: str = "filed"        # pending | filed
+    source: str = "sec-8k"
+    kind: str = "other"
+    scheduled: bool = False
+    url: str = ""
+
+
+class CompanyRecord(BaseModel):
+    """A company's dated record and its catalyst list."""
+
+    ticker: str
+    milestones: list[Milestone] = Field(default_factory=list)
+    catalysts: list[CatalystRow] = Field(default_factory=list)
+    has_cik: bool = True
+    note: str = ""
 
 
 class MetricRow(BaseModel):
@@ -309,6 +667,9 @@ class MetricRow(BaseModel):
     interest_cover: float | None = None
     net_debt_fy0: float | None = None
     ebitda_fy0: float | None = None
+    # Set when EBITDA is not plain operating income + D&A, so a substitution is
+    # never mistaken for the reported figure.
+    ebitda_basis: str = ""
     # Provenance for substituted measures: which CAGR window was actually used,
     # and which trend figures are changes rather than percentages.
     cagr_basis: str = ""
@@ -324,6 +685,12 @@ class MetricRow(BaseModel):
     model_adjusted_eps: float | None = None
     reported_non_gaap_eps: float | None = None
     selected_adjusted_eps: float | None = None
+    # The bridge behind the adjusted figures, so any row can show its working.
+    non_gaap: NonGaapReconciliation | None = None
+    # Headline figures from that bridge, so they can sit beside GAAP EPS in the
+    # growth block without the UI reaching into the reconciliation.
+    non_gaap_eps: float | None = None
+    gaap_to_adjusted_uplift: float | None = None
 
     # estimates / multiples
     eps_fy1_estimate: float | None = None

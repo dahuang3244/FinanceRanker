@@ -66,6 +66,34 @@ FLOW_TAGS: dict[str, list[str]] = {
         "IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest",
         "IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquityMethodInvestments",
     ],
+    # Non-GAAP reconciliation inputs. Filers do not tag a comparable "non-GAAP
+    # EPS": each discloses its own adjustments, so the bridge is assembled from
+    # the line items a company actually reports and the rest are shown as
+    # unavailable rather than assumed to be zero.
+    "equity_securities_gain": [
+        "EquitySecuritiesFvNiUnrealizedGainLoss",
+        "EquitySecuritiesFvNiRealizedGainLoss",
+        "EquitySecuritiesFvNiGainLoss",
+        "MarketableSecuritiesRealizedGainLoss",
+        "GainLossOnSaleOfInvestments",
+    ],
+    "other_nonoperating_income": ["OtherNonoperatingIncomeExpense"],
+    "legal_settlement": [
+        "LitigationSettlementExpense",
+        "LossContingencyLossInPeriod",
+        "LegalSettlementExpense",
+    ],
+    "impairment": [
+        "GoodwillImpairmentLoss",
+        "AssetImpairmentCharges",
+        "ImpairmentOfIntangibleAssetsExcludingGoodwill",
+    ],
+    "acquisition_costs": [
+        "BusinessCombinationAcquisitionRelatedCosts",
+        "AcquisitionRelatedCosts",
+    ],
+    "debt_extinguishment": ["GainsLossesOnExtinguishmentOfDebt"],
+    "discontinued_operations": ["IncomeLossFromDiscontinuedOperationsNetOfTax"],
 }
 
 INSTANT_TAGS: dict[str, list[str]] = {
@@ -139,6 +167,18 @@ IFRS_FLOW_TAGS: dict[str, list[str]] = {
         "TaxExpenseIncome",
     ],
     "pretax_income": ["ProfitLossBeforeTax", "AccountingProfit"],
+    # IFRS equivalents for the non-GAAP bridge.
+    "equity_securities_gain": [
+        "GainsLossesOnFinancialAssetsAtFairValueThroughProfitOrLoss",
+        "OtherGainsLosses",
+    ],
+    "restructuring": ["ExpenseOfRestructuringActivities", "RestructuringExpense"],
+    "amortization": [
+        "AmortisationExpense",
+        "AmortisationOfIntangibleAssetsOtherThanGoodwill",
+    ],
+    "impairment": ["ImpairmentLoss", "ImpairmentLossRecognisedInProfitOrLoss"],
+    "legal_settlement": ["LitigationSettlementExpense"],
 }
 
 IFRS_INSTANT_TAGS: dict[str, list[str]] = {
