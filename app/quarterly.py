@@ -881,6 +881,8 @@ def quarterly_eps(ticker: str, *, quarters: int = QUARTERS,
             except ZeroDivisionError:
                 adjusted_eps = None
 
+        distorted, distortion = _distortion(tax_rate, pretax, net_income)
+
         out.append(QuarterlyEps(
             label=_quarter_label(start, end),
             start=start, end=end,
@@ -898,12 +900,40 @@ def quarterly_eps(ticker: str, *, quarters: int = QUARTERS,
             revenue=revenue,
             diluted_shares=derived_shares,
             effective_tax_rate=tax_rate,
+            distorted=distorted,
+            distortion=distortion,
             lines=lines,
             missing=missing,
             has_adjustments=applied > 0,
             source="sec",
         ))
     return out
+
+
+def _distortion(tax_rate: float | None, pretax: float | None,
+                net_income: float | None) -> tuple[bool, str]:
+    """Whether something inside the quarter makes the GAAP figure unrepresentative.
+
+    Reported, not corrected: the number is what the company filed and it is read
+    correctly. What cannot be trusted is comparing it with a consensus, which is why
+    the flag exists.
+
+    Qualcomm's March 2026 quarter is the case that prompted this. Net income of
+    $7.37bn includes a tax *benefit* of $5.14bn — an effective rate of -230% — so EPS
+    reads 6.88 while revenue actually fell, from $12.25bn to $10.6bn. Against a
+    consensus of 2.56 the app displayed a 169% "beat" that describes nothing about
+    the business.
+
+    Two triggers. An effective rate below zero or above 60% is a tax item rather than
+    a tax rate — Qualcomm's -230% is the extreme, and Meta's -23% is a real one-off
+    benefit from tax reform. A loss-making quarter is the second, because a percentage
+    surprise against a positive estimate describes nothing.
+    """
+    if tax_rate is not None and (tax_rate < 0 or tax_rate > 0.6):
+        return True, f"effective tax rate {tax_rate * 100:.0f}%"
+    if net_income is not None and net_income < 0:
+        return True, "a loss-making quarter"
+    return False, ""
 
 
 def _from_analyst(analyst, *, quarters: int = QUARTERS) -> list[QuarterlyEps]:

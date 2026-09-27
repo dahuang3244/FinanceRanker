@@ -784,10 +784,25 @@ async def eps_quarters(ticker: str, quarters: int = 4) -> dict:
                         row.surprise_actual = actual
                         row.surprise_basis = basis
                         row.surprise_pct = (actual - estimate) / abs(estimate)
+                        # A distorted quarter is only suppressed when the comparison
+                        # rests on the distorted figure. Where the bases differ the
+                        # consensus is compared with the *adjusted* EPS, and that is
+                        # a valid comparison even in a quarter carrying a tax benefit
+                        # — Meta's 2026 Q1 has an effective rate of -23% while its
+                        # adjusted figure sits near the estimate. Suppressing there
+                        # would hide a comparison that is sound. Where the two bases
+                        # coincide, the distorted GAAP figure *is* what is being
+                        # compared, and the percentage says nothing: Qualcomm's March
+                        # 2026 quarter showed a large miss driven entirely by a tax
+                        # item. The figure is still shown; only the comparison goes.
+                        distorting = row.distorted and basis == "gaap"
+                        if distorting:
+                            row.surprise_pct = None
+                            row.surprise_mixed_basis = True
                         # Even on the adjusted basis the figure can sit far from the
                         # consensus, which means a definition this site does not
                         # capture. Say so rather than presenting it as a clean beat.
-                        if abs(actual - estimate) > abs(estimate) * 0.35:
+                        elif abs(actual - estimate) > abs(estimate) * 0.35:
                             row.surprise_mixed_basis = True
 
     if not rows:

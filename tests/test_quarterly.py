@@ -356,6 +356,49 @@ def test_a_displayed_gaap_figure_matches_the_tagged_fact():
     assert checked > 0, "no quarter was comparable, so the check proved nothing"
 
 
+def test_a_quarter_distorted_by_a_tax_item_is_flagged():
+    """A correctly-read figure can still be unrepresentative, and say so.
+
+    Qualcomm's March 2026 quarter reports EPS of 6.88 — read correctly from the filing
+    — on net income of $7.37bn that contains a tax *benefit* of $5.14bn, an effective
+    rate of -230%, while revenue fell from $12.25bn to $10.6bn. Against a consensus of
+    2.56 the app showed a large miss that describes nothing about the business.
+
+    Flagged rather than corrected: the number is what the company filed.
+    """
+    from app.quarterly import _distortion
+
+    flagged, reason = _distortion(-2.30, 2_232e6, 7_370e6)
+    assert flagged, "an effective rate of -230% is a tax item, not a rate"
+    assert "tax rate" in reason
+
+    flagged, reason = _distortion(-0.23, 8_000e6, 9_000e6)
+    assert flagged, "a negative effective rate is never an ordinary quarter"
+
+    flagged, reason = _distortion(None, -500e6, -1_200e6)
+    assert flagged, "a loss-making quarter cannot be measured against an estimate"
+    assert "loss" in reason
+
+    flagged, _ = _distortion(0.17, 30_000e6, 25_000e6)
+    assert not flagged, "an ordinary quarter must not be flagged"
+
+    flagged, _ = _distortion(0.24, 50_000e6, 38_000e6)
+    assert not flagged, "a high but ordinary rate must not be flagged"
+
+
+def test_the_distorted_figure_is_still_reported():
+    """The flag withholds a comparison, not the number."""
+    from app.quarterly import quarterly_eps
+
+    rows = quarterly_eps("QCOM", quarters=4)
+    for row in rows:
+        if row.distorted:
+            assert row.gaap_eps is not None, (
+                "a distorted quarter must still show the figure the company filed"
+            )
+            return
+
+
 if __name__ == "__main__":
     import traceback
 

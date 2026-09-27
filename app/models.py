@@ -370,6 +370,15 @@ class QuarterlyEps(BaseModel):
     # measure. Kept as a warning for the case where even the adjusted figure is far
     # from the consensus, which points at a definition this site does not capture.
     surprise_mixed_basis: bool = False
+    # True when the GAAP figure is distorted by something inside the quarter, so the
+    # reported number does not describe ordinary earnings. Qualcomm's March 2026
+    # quarter is the case: net income of $7.37bn contains a tax *benefit* of $5.14bn,
+    # an effective rate of -230%, while revenue fell to $10.6bn from $12.25bn. The
+    # GAAP EPS of 6.88 is real and correctly read, and comparing it with a consensus
+    # of 2.56 is meaningless — it produces a large miss that says nothing about the
+    # business. Recorded rather than hidden so the comparison can be withheld.
+    distorted: bool = False
+    distortion: str = ""
 
 
 class OptionsContract(BaseModel):
