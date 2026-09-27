@@ -27,7 +27,7 @@ from __future__ import annotations
 import json
 import logging
 import re
-from datetime import date
+from datetime import date, datetime
 
 from app import cache
 from app.config import settings
@@ -171,6 +171,38 @@ def _flatten(html: str) -> str:
     return re.sub(r"\s+", " ", text)
 
 
+def _table_grid(table_html: str) -> list[list[str]]:
+    """One table as a grid of cell text, honouring `colspan`.
+
+    Honouring the spans is what makes the columns identifiable. A header cell reading
+    "Three Months Ended" carries `colspan="2"` because it governs two numeric columns,
+    and "Six Months Ended" governs two more; a reader that treats each cell as one
+    column loses that correspondence and cannot say which figure belongs to a quarter.
+    A spanned cell is therefore repeated across the columns it covers.
+    """
+    grid: list[list[str]] = []
+    for row_html in re.findall(r"<tr[^>]*>(.*?)</tr>", table_html, re.I | re.S):
+        cells: list[str] = []
+        for attributes, inner in re.findall(r"<t[dh]([^>]*)>(.*?)</t[dh]>",
+                                            row_html, re.I | re.S):
+            span = 1
+            found = re.search(r'colspan\s*=\s*"?(\d+)', attributes, re.I)
+            if found:
+                try:
+                    span = max(1, int(found.group(1)))
+                except ValueError:
+                    span = 1
+            text = re.sub(r"<[^>]+>", " ", inner)
+            for entity, replacement in (("&#160;", " "), ("&nbsp;", " "),
+                                        ("&amp;", "&"), ("&#8217;", "'"),
+                                        ("&#8212;", "-"), ("&#8211;", "-")):
+                text = text.replace(entity, replacement)
+            cells.extend([re.sub(r"\s+", " ", text).strip()] * span)
+        if cells:
+            grid.append(cells)
+    return grid
+
+
 def _tables(html: str) -> list[list[list[str]]]:
     """The document's tables as grids of cell text.
 
@@ -178,22 +210,11 @@ def _tables(html: str) -> list[list[list[str]]]:
     Alphabet's diluted line becomes "per common share $ 2.31 $ 2.84 $ 2.30 $ 9.11",
     and a pattern over that cannot tell which of the four figures is the quarter being
     read rather than the year-to-date column beside it. Cell by cell, the same line is
-    four cells and the current quarter is the last of them.
+    four cells, and which of them is the quarter follows from the column headers.
     """
     out: list[list[list[str]]] = []
     for table_html in re.findall(r"<table[^>]*>(.*?)</table>", html, re.I | re.S):
-        grid: list[list[str]] = []
-        for row_html in re.findall(r"<tr[^>]*>(.*?)</tr>", table_html, re.I | re.S):
-            cells: list[str] = []
-            for cell_html in re.findall(r"<t[dh][^>]*>(.*?)</t[dh]>",
-                                        row_html, re.I | re.S):
-                text = re.sub(r"<[^>]+>", " ", cell_html)
-                for entity, replacement in (("&#160;", " "), ("&nbsp;", " "),
-                                            ("&amp;", "&"), ("&#8217;", "'")):
-                    text = text.replace(entity, replacement)
-                cells.append(re.sub(r"\s+", " ", text).strip())
-            if cells:
-                grid.append(cells)
+        grid = _table_grid(table_html)
         if grid:
             out.append(grid)
     return out
@@ -220,30 +241,103 @@ def _cell_number(text: str) -> float | None:
     return -value if negative else value
 
 
+# Header language that says how long the columns beneath it run.
+_QUARTER_HEADER = re.compile(
+    r"three\s+months|3\s+months|quarter\s+ended|3rd\s+qtr|2nd\s+qtr|1st\s+qtr|"
+    r"4th\s+qtr|first\s+quarter|second\s+quarter|third\s+quarter|fourth\s+quarter", re.I)
+_CUMULATIVE_HEADER = re.compile(
+    r"six\s+months|nine\s+months|year[\s-]*to[\s-]*date|twelve\s+months|"
+    r"six\s+month|nine\s+month|\bytd\b", re.I)
+# A date inside a header, used to tell the current period from the comparative one.
+_HEADER_DATE = re.compile(
+    r"(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{1,2},?\s*\d{4}"
+    r"|\d{1,2}/\d{1,2}/\d{2,4}", re.I)
+
+
+def _column_kinds(grid: list[list[str]]) -> list[str]:
+    """For each column, "quarter", "cumulative" or "unknown".
+
+    Read from the header rows, which is the only place the distinction is stated. A
+    table may carry both — Alphabet's income statement has a quarter pair followed by
+    a year-to-date pair — and the two are separated only by the span above them.
+    """
+    width = max((len(row) for row in grid), default=0)
+    kinds = ["unknown"] * width
+    for row in grid[:4]:
+        joined = " ".join(row)
+        if not (_QUARTER_HEADER.search(joined) or _CUMULATIVE_HEADER.search(joined)):
+            continue
+        for index in range(min(len(row), width)):
+            cell = row[index]
+            if _CUMULATIVE_HEADER.search(cell):
+                kinds[index] = "cumulative"
+            elif _QUARTER_HEADER.search(cell):
+                kinds[index] = "quarter"
+    return kinds
+
+
+def _header_period_columns(grid: list[list[str]], period_end: str) -> set[int]:
+    """The columns whose header names `period_end`.
+
+    The strongest identification available, because it does not rely on column order
+    at all. Not every release prints the date, so this refines a choice rather than
+    making it.
+    """
+    out: set[int] = set()
+    if not period_end:
+        return out
+    try:
+        wanted = date.fromisoformat(period_end)
+    except ValueError:
+        return out
+    for row in grid[:4]:
+        for index, cell in enumerate(row):
+            for found in _HEADER_DATE.finditer(cell):
+                text = found.group(0).replace(".", "")
+                for pattern in ("%B %d, %Y", "%b %d, %Y", "%B %d %Y", "%b %d %Y",
+                                "%m/%d/%Y", "%m/%d/%y"):
+                    try:
+                        parsed = datetime.strptime(text, pattern).date()
+                    except ValueError:
+                        continue
+                    # Within a week, since a period end and the date a release names
+                    # for it can differ by a day or two on a 52/53-week calendar.
+                    if abs((parsed - wanted).days) <= 7:
+                        out.add(index)
+                    break
+    return out
+
+
 def extract_quarterly_eps(html: str, *, period_end: str = "") -> float | None:
-    """NOT SHIPPED — kept as a starting point for a measured implementation.
+    """NOT SHIPPED — two implementations measured and both rejected.
 
-    Reading a quarter's diluted EPS out of the release was attempted and abandoned.
-    The figure is plainly there, but which column it is cannot be decided from the row
-    alone, and both simple rules were measured against figures known from XBRL:
+    The quarter's EPS is plainly in the release. Identifying *which* figure on the
+    diluted line is the quarter has now been attempted twice, and scored both times
+    against figures already known from XBRL, on the same sample of 40 filings:
 
-        first numeric value on the diluted line : 17/23 filings correct
-        last  numeric value on the diluted line :  3/23 filings correct
+        first numeric value on the diluted line : 17/40 correct, 23 not verified
+        last  numeric value on the diluted line :  3/40 correct
+        header-based column classification      : 10/40 correct, 22 none, 8 WRONG
 
-    The failures are the ambiguous layouts, not mistakes in matching. Alphabet's
-    2025 Q3 statement reads [2.12, 2.87, 5.9, 7.99] — prior-year quarter, current
-    quarter, prior-year year-to-date, current year-to-date — so the quarter is second
-    there and first elsewhere. A 26% error rate that fails *silently*, producing a
-    plausible-looking figure in the wrong column, is worse than an absent quarter,
-    which is why this returns nothing rather than guessing.
+    Neither is usable, and the header-based attempt is the more dangerous of the two.
+    Its failures are silent and plausible: Meta's June 2026 quarter came back as 7.14,
+    which is the prior-year comparative on the same line, and Eli Lilly's came back as
+    1.07 against an actual 6.21. A reader cannot tell either from a correct figure.
 
-    A measured implementation needs the column headers: `Three Months Ended` versus
-    `Six Months Ended` and `Year To Date`, with the period-end date matched against
-    the header row. That is the next step, and it must be scored the same way.
+    The reason is that the statements do not share a structure to key on. Alphabet puts
+    its quarter pair beside its year-to-date pair, so the line reads
+    [2.12, 2.87, 5.9, 7.99]; Meta leads with the current quarter and trails a
+    percentage-change column; Micron's reconciliation carries a GAAP and a non-GAAP
+    figure where the non-GAAP one is last; and several filers print no date in the
+    header at all, which is what `period_end` matching needs.
+
+    So this returns nothing, and a test asserts it goes on doing so. A quarter absent
+    from the series is visibly absent; a quarter taken from the wrong column is not.
     """
     raise NotImplementedError(
-        "quarterly EPS extraction needs header-based column identification; "
-        "the row-order rules scored 74% and are not safe to use"
+        "quarterly EPS extraction has been measured twice and is not reliable enough "
+        "to return a figure: the header-based attempt was wrong for 8 of 40 filings, "
+        "silently returning the comparative column"
     )
 
 

@@ -187,20 +187,24 @@ def test_a_non_deductible_fine_is_added_back_without_a_tax_benefit():
 
 
 def test_quarterly_eps_extraction_is_not_guessed_at():
-    """Reading a quarter's EPS from the release is deliberately not implemented.
+    """Reading a quarter's EPS from the release was attempted twice and rejected.
 
-    The figure is there, but which column it is cannot be decided from the row alone.
-    Two rules were measured against figures already known from XBRL: taking the first
-    numeric value on the diluted line was right for 17 of 23 real filings, and the
-    last for 3. The failures are ambiguous layouts rather than matching mistakes —
-    Alphabet's 2025 Q3 statement reads [2.12, 2.87, 5.9, 7.99], prior-year quarter,
-    current quarter, prior-year year-to-date, current year-to-date.
+    Measured against figures already known from XBRL, on a sample of 40 filings:
 
-    A rule that is wrong for a quarter of filings and fails *silently* — returning a
-    plausible figure from the wrong column — is worse than an absent quarter. This
-    test exists so the function cannot be quietly made to guess: if it is ever
-    implemented it must be by matching the column headers, and it must be scored the
-    same way before it is allowed to return a number.
+        first numeric value on the diluted line : 17/40 correct
+        last  numeric value on the diluted line :  3/40 correct
+        header-based column classification      : 10/40 correct, 22 none, 8 WRONG
+
+    The header-based attempt is the more dangerous of the two. It classified the
+    columns from the header spans and still returned the prior-year comparative for
+    Meta — 7.14 against an actual 6.18 — and 1.07 against 6.21 for Eli Lilly. The
+    statements share no structure to key on: Alphabet puts its quarter pair beside its
+    year-to-date pair, Meta trails a percentage-change column, Micron carries a GAAP
+    and a non-GAAP figure where the non-GAAP one is last, and several filers print no
+    date in the header at all, which is what matching `period_end` needs.
+
+    This test exists so the function cannot be quietly made to guess. A quarter absent
+    from the series is visibly absent; one taken from the wrong column is not.
     """
     from app.release import extract_quarterly_eps
 
@@ -209,8 +213,8 @@ def test_quarterly_eps_extraction_is_not_guessed_at():
     except NotImplementedError:
         return
     raise AssertionError(
-        "extract_quarterly_eps returned a figure; it must identify the column from "
-        "the headers and be measured against the 23-filing sample first"
+        "extract_quarterly_eps returned a figure; it must be measured against the "
+        "40-filing sample and be right for essentially all of them first"
     )
 
 
