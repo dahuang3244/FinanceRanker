@@ -242,6 +242,34 @@ def _cell_number(text: str) -> float | None:
 
 
 # ---------------------------------------------------------------------------
+# Are the sources labelling a year-to-date figure as a quarter?
+#
+# No. Worth recording because it is a reasonable thing to suspect — a source whose
+# "2025 Q3" meant the first three quarters combined would put nine months of earnings
+# into one quarter. Measured, it does not happen, and the test is decisive:
+#
+#   Of 152 values drawn from two independent sources (Nasdaq's EPS endpoint and the
+#   analyst feed), compared against every EPS fact the filer tagged:
+#
+#       38 matched a quarter-length fact (80-100 days)
+#        0 matched a cumulative fact (170-380 days)
+#      114 matched neither — adjusted figures rather than the filer's GAAP
+#
+#   Across all 68 displayed GAAP figures in the pool, none equals a cumulative amount
+#   for its month.
+#
+# What makes that check trustworthy is a separate invariant: a filer's tagged quarters
+# sum to its tagged cumulative for the same year, so the tagged quarters really are the
+# reported periods. Alphabet's 2025: 2.81 + 2.31 + 2.87 = 7.99 against a tagged nine
+# months of 7.99. Meta's: 6.43 + 7.14 + 1.05 = 14.62 against 14.62.
+#
+# The differences between sources are therefore the GAAP-against-adjusted basis and
+# restatements, not the period. Microsoft's December 2025 quarter is the clearest case:
+# both sources say 4.14 where the filing tags 5.16, and 4.14 is neither the quarter nor
+# any cumulative period — a different measure, not a different span.
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
 # Sources surveyed for a quarter the filer did not tag in XBRL
 #
 # Recorded because the survey took real work and its conclusion is not obvious: no

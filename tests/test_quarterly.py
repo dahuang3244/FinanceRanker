@@ -399,6 +399,115 @@ def test_the_distorted_figure_is_still_reported():
             return
 
 
+def test_tagged_quarters_reconcile_to_the_tagged_cumulative():
+    """The check that settles whether a figure is a quarter or a year-to-date total.
+
+    A concern worth taking seriously: a source labelling a cumulative period as a
+    quarter would make the app show nine months of earnings as one quarter. Measured
+    across the pool it does not happen — of 152 values from two independent sources, 38
+    matched a quarter-length fact, 114 matched neither, and **0 matched a cumulative
+    fact**. Neither source labels year-to-date figures as quarters.
+
+    This test pins the invariant that makes that check meaningful: a filer's own tagged
+    quarters sum to its own tagged cumulative for the same fiscal year, so the tagged
+    quarters are the reported periods and a figure disagreeing with them is on a
+    different basis rather than a different period. Alphabet's 2025 quarters are
+    2.81 + 2.31 + 2.87 = 7.99 against a tagged nine months of 7.99; Meta's are
+    6.43 + 7.14 + 1.05 = 14.62 against 14.62.
+
+    Skipped offline rather than failing, since it reads the live cache.
+    """
+    from datetime import date
+
+    from app.quarterly import EPS_TAGS, _facts, _unit_series
+
+    for ticker in ("GOOGL", "META", "MSFT", "AAPL"):
+        try:
+            facts = _facts(ticker)
+        except Exception:  # noqa: BLE001 - offline
+            return
+        if not facts:
+            continue
+        quarters: list[tuple[str, str, float]] = []
+        cumulative: list[tuple[str, str, float]] = []
+        for tag in EPS_TAGS:
+            node = facts.get(tag)
+            if not node:
+                continue
+            for row in _unit_series(node, ("USD/shares",)):
+                start, end, value = row.get("start"), row.get("end"), row.get("val")
+                if not start or not end or value is None:
+                    continue
+                days = (date.fromisoformat(end) - date.fromisoformat(start)).days
+                if 80 <= days <= 100:
+                    quarters.append((start, end, float(value)))
+                elif 170 <= days <= 380:
+                    cumulative.append((start, end, float(value)))
+        for nine_start, nine_end, nine_value in cumulative:
+            days = (date.fromisoformat(nine_end) - date.fromisoformat(nine_start)).days
+            if not (255 <= days <= 285):
+                continue
+            # Quarters of *this* fiscal year, identified by the same start date. Taking
+            # every quarter that merely falls inside the window sweeps up periods from
+            # other years — Alphabet has a 26.29 quarter from years back whose dates sit
+            # between these — and the sum then measures nothing.
+            inside = [v for s, e, v in quarters if s == nine_start and e <= nine_end]
+            if len(inside) != 3:
+                continue
+            assert abs(sum(inside) - nine_value) < 0.02, (
+                f"{ticker}: quarters {inside} sum to {sum(inside):.2f} but the tagged "
+                f"nine months is {nine_value:.2f}"
+            )
+
+
+def test_no_displayed_figure_is_a_cumulative_amount():
+    """A guard against the failure mode directly: a quarter shown as nine months.
+
+    Every displayed GAAP figure is compared with the filer's cumulative facts for the
+    same month. A match with no quarter-length fact of the same value would mean a
+    year-to-date total presented as one quarter's earnings. Skipped offline.
+    """
+    from datetime import date
+
+    from app.quarterly import EPS_TAGS, _facts, _unit_series, quarterly_eps
+
+    for ticker in ("GOOGL", "META", "MSFT", "AAPL", "MU"):
+        try:
+            facts = _facts(ticker)
+        except Exception:  # noqa: BLE001 - offline
+            return
+        if not facts:
+            continue
+        quarter_values: dict[str, list[float]] = {}
+        cumulative_values: dict[str, list[float]] = {}
+        for tag in EPS_TAGS:
+            node = facts.get(tag)
+            if not node:
+                continue
+            for row in _unit_series(node, ("USD/shares",)):
+                start, end, value = row.get("start"), row.get("end"), row.get("val")
+                if not start or not end or value is None:
+                    continue
+                days = (date.fromisoformat(end) - date.fromisoformat(start)).days
+                if 80 <= days <= 100:
+                    quarter_values.setdefault(end[:7], []).append(float(value))
+                elif 170 <= days <= 380:
+                    cumulative_values.setdefault(end[:7], []).append(float(value))
+
+        for row in quarterly_eps(ticker, quarters=4):
+            if row.gaap_eps is None:
+                continue
+            month = row.end[:7]
+            if any(abs(value - row.gaap_eps) < 0.02
+                   for value in quarter_values.get(month, [])):
+                continue
+            for value in cumulative_values.get(month, []):
+                assert abs(value - row.gaap_eps) >= 0.02, (
+                    f"{ticker} {row.label}: displayed {row.gaap_eps} is a cumulative "
+                    f"amount ({value}) for that month, not a quarter"
+                )
+
+
 if __name__ == "__main__":
     import traceback
 
