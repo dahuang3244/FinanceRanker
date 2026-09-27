@@ -367,7 +367,8 @@ def _derive_quarters(facts: dict, known: list[tuple[str, str]]) -> dict[tuple[st
                 # quarters is the shortest cumulative span (six months).
                 if days < CUMULATIVE_MIN_DAYS:
                     continue
-                out.append({"start": start, "end": end, "days": days})
+                out.append({"start": start, "end": end, "days": days,
+                            "accn": str(row.get("accn") or "")})
         return out
 
     eps_spans = spans(EPS_TAGS, ("USD/shares",))
@@ -390,12 +391,31 @@ def _derive_quarters(facts: dict, known: list[tuple[str, str]]) -> dict[tuple[st
             starts.append(row["start"])
     starts.sort()
 
-    def derive(earlier_start: str, end: str, later_start: str, later: str):
+    def derive(earlier_start: str, end: str, later_start: str, later: str,
+               accn: str = "", later_accn: str = ""):
         """The gap as a difference of two cumulative periods, or None."""
         later_eps = _value_for(facts, EPS_TAGS, later_start, later, ("USD/shares",))
         earlier_eps = _value_for(facts, EPS_TAGS, earlier_start, end, ("USD/shares",))
         later_income = _value_for(facts, INCOME_TAGS["net_income"], later_start, later, ("USD",))
         earlier_income = _value_for(facts, INCOME_TAGS["net_income"], earlier_start, end, ("USD",))
+
+        # Both periods must come from the **same filing**, and for the year-against-
+        # nine-months subtraction that is not a technicality.
+        #
+        # A filer restates: Micron's nine-month figure comes from a 10-Q, its full
+        # year from a later 10-K, and subtracting one from the other gave a fourth
+        # quarter of 5.02 where the company reported 4.60. Qualcomm is the same fault
+        # at a larger scale — its 10-K states a fiscal 2025 EPS of 5.01 while a later
+        # 10-Q restates the first nine months at 7.79, a nine-month total *above* the
+        # full year, and the subtraction produced a quarter of -2.78. A profitable
+        # company appeared to post a large loss.
+        #
+        # Two figures filed together are consistent by construction, so within one
+        # filing the subtraction is sound. Where they are not, no quarter is derived
+        # and the quarter is simply absent: an absent quarter is honest, and the
+        # alternative is a figure that can be wrong by more than a dollar a share.
+        if later_accn and accn and accn != later_accn:
+            return None
 
         eps_value = (later_eps - earlier_eps
                      if later_eps is not None and earlier_eps is not None else None)
@@ -414,6 +434,73 @@ def _derive_quarters(facts: dict, known: list[tuple[str, str]]) -> dict[tuple[st
             "derived": True,
         }
 
+    def contradicts(end: str, later: str, value: dict,
+                    later_start: str = "") -> bool:
+        """Is this subtraction demonstrably wrong?
+
+        Two tests, because a restatement can hide in either place.
+
+        First, where the filer tagged the quarter itself, that statement is
+        authoritative and a subtraction disagreeing with it is wrong.
+
+        Second — and this is the one that catches Qualcomm — the cumulative figures
+        must be consistent with the individual quarters the filer stated. Its 10-K
+        gives a fiscal 2025 EPS of 5.01, but a later 10-Q gives the first nine months
+        as 7.79, a nine-month total *above* the full year, and the resulting fourth
+        quarter came out at -2.78. Checking the *latest* cumulative against the
+        earlier ones exposes that: full year minus nine months minus six months must
+        be the first quarter the filer stated. Qualcomm's gives -8.14 against a stated
+        2.83, so the cumulative cannot be trusted and no quarter is derived from it.
+        """
+        if (end, later) in known_set:
+            for tags, units, key in (
+                    (EPS_TAGS, ("USD/shares",), "gaap_eps"),
+                    (INCOME_TAGS["net_income"], ("USD",), "net_income")):
+                stated = _value_for(facts, tags, end, later, units)
+                derived_value = value.get(key)
+                if stated is None or derived_value is None:
+                    continue
+                if abs(stated - derived_value) > max(abs(stated) * 0.02, 0.01):
+                    return True
+
+        # Only a twelve-month cumulative can be validated this way, since the test is
+        # that a year equals its quarters. Nine months against six is validated by the
+        # first test wherever the third quarter was stated.
+        total = _value_for(facts, EPS_TAGS, later_start, later, ("USD/shares",))
+        nine = _value_for(facts, EPS_TAGS, later_start, end, ("USD/shares",))
+        if total is None or nine is None:
+            return False
+        for quarter_start, quarter_end in known_set:
+            if quarter_start != later_start or quarter_end >= end:
+                continue
+            try:
+                covered = (date.fromisoformat(quarter_end)
+                           - date.fromisoformat(quarter_start)).days
+                whole = (date.fromisoformat(later)
+                         - date.fromisoformat(quarter_start)).days
+            except ValueError:
+                continue
+            if not (350 <= whole <= 380):
+                continue
+            # The earliest quarter of that fiscal year is the residual.
+            if covered > whole / 2:
+                continue
+            stated = _value_for(facts, EPS_TAGS, quarter_start, quarter_end,
+                                ("USD/shares",))
+            six = _value_for(facts, EPS_TAGS, quarter_start, end, ("USD/shares",))
+            if stated is None or six is None:
+                continue
+            if abs((total - nine - six) - stated) > max(abs(stated) * 0.05, 0.02):
+                return True
+        return False
+
+    def accession_of(start: str, end: str) -> str:
+        """The filing that stated this cumulative period."""
+        for row in eps_spans:
+            if row["start"] == start and row["end"] == end:
+                return row["accn"]
+        return ""
+
     for index, end in enumerate(ends):
         for later in ends[index + 1:]:
             if (end, later) in known_set:
@@ -431,8 +518,10 @@ def _derive_quarters(facts: dict, known: list[tuple[str, str]]) -> dict[tuple[st
                       if _value_for(facts, EPS_TAGS, s, end, ("USD/shares",)) is not None
                       and _value_for(facts, EPS_TAGS, s, later, ("USD/shares",)) is not None]
             if shared:
-                value = derive(shared[0], end, shared[0], later)
-                if value:
+                value = derive(shared[0], end, shared[0], later,
+                               accession_of(shared[0], end),
+                               accession_of(shared[0], later))
+                if value and not contradicts(end, later, value, shared[0]):
                     derived[(end, later)] = value
                     continue
 
@@ -448,8 +537,10 @@ def _derive_quarters(facts: dict, known: list[tuple[str, str]]) -> dict[tuple[st
                 same = _value_for(facts, EPS_TAGS, earlier_start, end, ("USD/shares",))
                 if same is None:
                     continue
-                value = derive(earlier_start, end, earlier_start, later)
-                if value:
+                value = derive(earlier_start, end, earlier_start, later,
+                               accession_of(earlier_start, end),
+                               accession_of(earlier_start, later))
+                if value and not contradicts(end, later, value, earlier_start):
                     derived[(end, later)] = value
                     break
 

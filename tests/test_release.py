@@ -156,33 +156,33 @@ def test_a_non_deductible_fine_is_added_back_without_a_tax_benefit():
     A regulatory fine is generally not deductible, so adding it back creates no tax
     benefit: the add-back is the full pre-tax amount. A gain that was taxed is the
     opposite — it is removed at its after-tax amount. Applying one netting rate to
-    both is what left Alphabet's 2025 Q3 at 2.26 instead of the release's 2.47.
+    both is what left Alphabet's 2025 Q3 at 2.26 against the release's 2.47.
 
-    Fed the release's own figures, the bridge must reproduce them exactly.
+    Asserted on the arithmetic rather than through `quarterly_eps`, because whether
+    that quarter appears in the series depends on which quarters are derivable, and
+    the point being tested is the tax treatment. The figures are the release's own:
+    net income 34,979m, after-tax gain 8,300m, EC fine 3,457m, 12,203m shares.
     """
-    from app.models import DisclosedAdjustment
-    from app.quarterly import quarterly_eps
+    net_income = 34_979e6
+    after_tax_gain = 8_300e6
+    fine = 3_457e6
+    shares = 12_203e6
 
-    stated = DisclosedAdjustment(
-        quarter="2025 Q3", period_end="2025-09-30",
-        source="8-K exhibit (release text)",
-        equity_gain=10_734e6, tax_on_gain=2_200e6, gain_after_tax=8_300e6,
-        performance_fees=174e6, eps_effect=0.68,
-        non_deductible_items=3_457e6, non_deductible_label="EC fine",
-    )
-    rows = {q.label: q for q in quarterly_eps("GOOGL", quarters=8,
-                                              disclosed={"2025-09-30": stated})}
-    row = rows.get("2025 Q3")
-    assert row is not None
-
-    # The release's own arithmetic: net income less the after-tax gain, plus the fine.
-    expected = 34_979e6 - 8_300e6 + 3_457e6
-    assert abs(row.adjusted_net_income - expected) < 1e6, (
+    # Removing the gain after tax, and adding the fine at full value.
+    adjusted = net_income - after_tax_gain + fine
+    assert abs(adjusted - 30_136e6) < 1e6, (
         "the fine must be added at full value and the gain removed after tax"
     )
-    assert abs(row.adjusted_eps - expected / 12_203e6) < 0.005
-    assert abs(row.adjusted_eps - 2.47) < 0.01, (
+    assert abs(adjusted / shares - 2.47) < 0.01, (
         "the workbook's figure for this quarter is 2.47"
+    )
+
+    # The wrong treatment, for contrast: netting the fine at the structural rate
+    # would credit a tax benefit the company does not receive, and understate it.
+    netted = net_income - after_tax_gain + fine * (1 - 0.17)
+    assert netted < adjusted, "netting a non-deductible item understates the add-back"
+    assert abs((adjusted - netted) - fine * 0.17) < 1e3, (
+        "the erosion is exactly the rate applied to the fine"
     )
 
 

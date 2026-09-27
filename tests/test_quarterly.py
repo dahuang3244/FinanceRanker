@@ -298,6 +298,64 @@ def test_adjustments_are_netted_on_the_pretax_side_where_possible():
     )
 
 
+def test_a_cumulative_may_not_be_combined_across_filings():
+    """A restatement must not be subtracted from a figure on another basis.
+
+    This is the defect that showed Qualcomm posting a large quarterly loss while
+    profitable. Its 10-K states a fiscal 2025 EPS of 5.01; a later 10-Q restates the
+    first nine months at 7.79 — a nine-month total *above* the full year. Subtracting
+    one from the other gave a fourth quarter of -2.78. Micron is the same fault more
+    quietly: a 10-Q nine-month figure against a 10-K full year gave a fourth quarter
+    of 5.02 where the company reported 4.60.
+
+    Two figures filed together are consistent by construction, so within one filing
+    the subtraction is sound. Across filings it is not, and no quarter is derived.
+    """
+    import inspect
+
+    from app import quarterly as module
+
+    source = inspect.getsource(module._derive_quarters)
+    assert "if later_accn and accn and accn != later_accn:" in source, (
+        "axis periods must be refused when they come from different filings"
+    )
+    assert 'row.get("accn")' in source, (
+        "the accession has to be captured with the span for that test to work"
+    )
+
+
+def test_a_displayed_gaap_figure_matches_the_tagged_fact():
+    """Every quarter shown must equal the fact the filer actually tagged.
+
+    The check that makes the restatement bug visible: a derived quarter is only
+    acceptable if it agrees with the filer's own statement, and a quarter taken from
+    a fact must equal that fact. Run against the live cache for the whole pool, and
+    skipped when there is no network rather than failing the suite.
+    """
+    from app.quarterly import EPS_TAGS, _facts, _value_for, quarterly_eps
+
+    pool = ("MU", "QCOM", "GOOGL", "MSFT", "AAPL", "KO", "AVGO", "ORCL")
+    checked = 0
+    for ticker in pool:
+        try:
+            facts = _facts(ticker)
+        except Exception:  # noqa: BLE001 - offline
+            return
+        if not facts:
+            continue
+        for quarter in quarterly_eps(ticker, quarters=4):
+            stated = _value_for(facts, EPS_TAGS, quarter.start, quarter.end,
+                                ("USD/shares",))
+            if stated is None or quarter.gaap_eps is None:
+                continue
+            checked += 1
+            assert abs(stated - quarter.gaap_eps) < 0.005, (
+                f"{ticker} {quarter.label}: displayed {quarter.gaap_eps} "
+                f"but the filing states {stated}"
+            )
+    assert checked > 0, "no quarter was comparable, so the check proved nothing"
+
+
 if __name__ == "__main__":
     import traceback
 
