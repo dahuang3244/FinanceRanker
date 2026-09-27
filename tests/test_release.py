@@ -1,0 +1,208 @@
+"""The release-text extractor, tested against the wording real releases use.
+
+These figures are the ones the reconciliation cannot compute: the tax on an
+equity-securities gain and a one-off fine are not XBRL facts, so they exist only in
+the earnings release. The patterns are therefore tested against the sentences the
+releases actually contain, quoted here, rather than against invented samples.
+
+Run: python tests/test_release.py
+"""
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from app.release import (  # noqa: E402
+    _CENTS,
+    _EPS_SENTENCE,
+    _FINE,
+    _flatten,
+    extract_disclosures,
+)
+
+# Quoted from Alphabet's releases. The 2025 ones fold the performance fees into the
+# same sentence; the 2026 ones do not, and one says "per common share".
+ALPHABET_2025Q3 = (
+    "the net effect of the gain on equity securities of $10.7 billion and the "
+    "performance fees related to certain investments of $174 million increased the "
+    "provision for income tax, net income, and diluted net income per share by "
+    "$2.2 billion, $8.3 billion, and $0.68, respectively."
+)
+ALPHABET_2026Q2 = (
+    "the net effect of the gain on equity securities of $99.0 billion increased the "
+    "provision for income tax, net income, and diluted net income per common share by "
+    "$21.9 billion, $77.1 billion, and $6.26, respectively."
+)
+# The 2025 Q1 release has a stray space inside a word, which the released HTML does
+# leave behind: "increased th e provision".
+ALPHABET_2025Q1_GLITCHED = (
+    "the net effect of the gain on equity securities of $9.8 billion and the "
+    "performance fees related to certain investments of $40 million increased th e "
+    "provision for income tax, net income, and diluted net income per share by "
+    "$2.0 billion, $7.7 billion, and $0.62, respectively."
+)
+# Verbatim from the reconciliation table.
+EC_FINE_TABLE = (
+    "Quarter Ended September 30, 2024 2025 % Change Revenues $ 88,268 $ 102,346 "
+    "16 % Operating income (GAAP) $ 28,521 $ 31,228 9 % add: EC fine 0 3,457 "
+    "Operating income, excluding the EC fine (Non-GAAP) $ 28,521 $ 34,685 22 %"
+)
+
+
+def test_the_gain_triple_is_read_in_order():
+    """The three amounts are tax, net income, then per share, in that order."""
+    result = extract_disclosures(ALPHABET_2025Q3)
+    assert result is not None
+    assert abs(result.equity_gain - 10.7e9) < 1e6
+    assert abs(result.tax_on_gain - 2.2e9) < 1e6
+    assert abs(result.gain_after_tax - 8.3e9) < 1e6
+    assert abs(result.eps_effect - 0.68) < 0.001
+
+
+def test_the_per_share_figure_is_the_cents_amount_not_the_tax():
+    """A regression: the first `$` after "per share" is the tax, not the EPS effect.
+
+    Anchoring on the first amount read $2.2 billion as the per-share effect, which is
+    three orders of magnitude too large and would have made every surprise look
+    enormous.
+    """
+    result = extract_disclosures(ALPHABET_2025Q3)
+    assert result.eps_effect < 10, "a per-share effect cannot be in the billions"
+    assert abs(result.eps_effect - 0.68) < 0.001
+
+
+def test_cents_are_not_confused_with_the_billions_in_the_same_clause():
+    """"$2.2 billion, $8.3 billion, and $0.68" holds exactly one per-share amount."""
+    clause = " $2.2 billion, $8.3 billion, and $0.68, "
+    assert _CENTS.findall(clause) == ["0.68"]
+
+
+def test_the_2026_wording_without_performance_fees_is_read():
+    """"per common share" and a sentence with no fee clause must still parse."""
+    result = extract_disclosures(ALPHABET_2026Q2)
+    assert result is not None
+    assert abs(result.gain_after_tax - 77.1e9) < 1e7
+    assert abs(result.tax_on_gain - 21.9e9) < 1e7
+    assert abs(result.eps_effect - 6.26) < 0.001
+    assert result.performance_fees is None, "no fee was disclosed this quarter"
+
+
+def test_a_stray_space_inside_a_word_does_not_break_the_match():
+    """The released HTML contains "increased th e provision"."""
+    result = extract_disclosures(ALPHABET_2025Q1_GLITCHED)
+    assert result is not None
+    assert abs(result.gain_after_tax - 7.7e9) < 1e6
+    assert abs(result.eps_effect - 0.62) < 0.001
+    assert abs(result.performance_fees - 40e6) < 1e6
+
+
+def test_a_fine_is_read_from_the_reconciliation_table():
+    """The table is the accounting figure, not the rounded sentence in the prose.
+
+    The release also says "an EC fine of $3.5 billion"; the table says 3,457, and
+    only the table is the amount the company actually added back.
+    """
+    result = extract_disclosures(EC_FINE_TABLE)
+    assert result is not None
+    assert abs(result.non_deductible_items - 3_457e6) < 1e6
+    assert "fine" in result.non_deductible_label.lower()
+
+
+def test_nothing_is_invented_when_the_wording_does_not_match():
+    """A release this module cannot read must yield nothing, not a wrong number.
+
+    The caller keeps the calculated bridge in that case, so an unmatched filer loses
+    no table; a guessed figure would be worse than none.
+    """
+    unrelated = (
+        "Our third quarter was strong. Revenues grew across every segment and we "
+        "returned capital to shareholders. Diluted EPS was $2.87."
+    )
+    assert extract_disclosures(unrelated) is None
+
+
+def test_zero_is_not_recorded_as_a_disclosed_add_back():
+    """A comparative period of zero must not become the add-back."""
+    result = extract_disclosures(EC_FINE_TABLE)
+    assert result.non_deductible_items != 0
+    assert result.non_deductible_items is not None
+
+
+def test_html_entities_are_decoded_before_matching():
+    """SEC writes punctuation as entities, which would sit inside the sentences."""
+    html = "<p>gain on equity securities of $10.7 billion</p><p>&#8226; and the " \
+           "performance fees related to certain investments of $174 million</p>"
+    text = _flatten(html)
+    assert "&#8226;" not in text
+    assert "gain on equity securities of $10.7 billion" in text
+
+
+def test_the_eps_sentence_is_bounded_by_the_word_respectively():
+    """The capture must reach the last amount, not stop at the decimal point.
+
+    A regression: `[^.]` treated the period inside "$2.2" as a sentence end, so the
+    capture was two characters long and no per-share figure was ever found.
+    """
+    match = _EPS_SENTENCE.search(ALPHABET_2025Q3)
+    assert match is not None
+    assert "0.68" in match.group("amounts")
+
+
+def test_a_non_deductible_fine_is_added_back_without_a_tax_benefit():
+    """The distinction that made the earlier figures wrong in both directions.
+
+    A regulatory fine is generally not deductible, so adding it back creates no tax
+    benefit: the add-back is the full pre-tax amount. A gain that was taxed is the
+    opposite — it is removed at its after-tax amount. Applying one netting rate to
+    both is what left Alphabet's 2025 Q3 at 2.26 instead of the release's 2.47.
+
+    Fed the release's own figures, the bridge must reproduce them exactly.
+    """
+    from app.models import DisclosedAdjustment
+    from app.quarterly import quarterly_eps
+
+    stated = DisclosedAdjustment(
+        quarter="2025 Q3", period_end="2025-09-30",
+        source="8-K exhibit (release text)",
+        equity_gain=10_734e6, tax_on_gain=2_200e6, gain_after_tax=8_300e6,
+        performance_fees=174e6, eps_effect=0.68,
+        non_deductible_items=3_457e6, non_deductible_label="EC fine",
+    )
+    rows = {q.label: q for q in quarterly_eps("GOOGL", quarters=8,
+                                              disclosed={"2025-09-30": stated})}
+    row = rows.get("2025 Q3")
+    assert row is not None
+
+    # The release's own arithmetic: net income less the after-tax gain, plus the fine.
+    expected = 34_979e6 - 8_300e6 + 3_457e6
+    assert abs(row.adjusted_net_income - expected) < 1e6, (
+        "the fine must be added at full value and the gain removed after tax"
+    )
+    assert abs(row.adjusted_eps - expected / 12_203e6) < 0.005
+    assert abs(row.adjusted_eps - 2.47) < 0.01, (
+        "the workbook's figure for this quarter is 2.47"
+    )
+
+
+if __name__ == "__main__":
+    import traceback
+
+    passed = 0
+    failed = 0
+    for name, function in sorted(globals().items()):
+        if not name.startswith("test_") or not callable(function):
+            continue
+        try:
+            function()
+        except Exception:  # noqa: BLE001 - report and continue
+            failed += 1
+            print(f"FAIL  {name}")
+            traceback.print_exc()
+        else:
+            passed += 1
+            print(f"PASS  {name}")
+    print()
+    print(f"{passed}/{passed + failed} passed")
+    sys.exit(1 if failed else 0)

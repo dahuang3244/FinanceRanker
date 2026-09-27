@@ -684,6 +684,39 @@ async def eps_quarters(ticker: str, quarters: int = 4) -> dict:
         quarterly_eps, symbol, quarters=span, analyst=detail)
     bridge = await asyncio.to_thread(quarterly_bridge, symbol)
 
+    # What the releases themselves stated, which is authoritative where available.
+    # The tax on an equity-securities gain is not an XBRL fact, so a bridge built
+    # from the structured data alone cannot reproduce the filer's own figures: for
+    # Alphabet's 2025 Q3 the calculated answer was 2.26 against the release's 2.47.
+    # Re-read only when the release cannot be reached, so a filer whose wording does
+    # not match keeps the calculated bridge rather than losing its table.
+    try:
+        from app.quarterly import _facts, _quarter_series, disclosed_quarters
+        from app.release import find_release_accession, get_disclosures
+
+        def _fetcher(filed: str, quarter: str, end: str):
+            # `filed` is the date the quarter was reported, which is what pairs it
+            # with the 8-K carrying the release; the accession on the fact belongs to
+            # the 10-Q, and the release is not in that filing.
+            accession = find_release_accession(symbol, filed)
+            if not accession:
+                return None
+            return get_disclosures(symbol, accession=accession,
+                                   quarter=quarter, period_end=end)
+
+        facts = await asyncio.to_thread(_facts, symbol)
+        if facts:
+            series, _marks = _quarter_series(facts)
+            stated = await asyncio.to_thread(
+                disclosed_quarters, facts, series, limit=span, fetcher=_fetcher)
+            if stated:
+                rows = await asyncio.to_thread(
+                    quarterly_eps, symbol, quarters=span, analyst=detail,
+                    disclosed=stated)
+    except Exception as exc:  # noqa: BLE001 - the calculated bridge is the fallback
+        log.debug("release disclosures unavailable for %s: %s", symbol, exc)
+
+
     # Join consensus to the quarter. An exact date match is right for a calendar
     # filer, but a company with an offset fiscal calendar ends its quarter on
     # whatever weekday the period closes — NVIDIA's 2026 Q3 ended 2026-07-26 and

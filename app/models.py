@@ -296,6 +296,35 @@ class QuarterPoint(BaseModel):
     end: str = ""
 
 
+class DisclosedAdjustment(BaseModel):
+    """What a company's earnings release states about its own adjustments.
+
+    These figures are not XBRL facts. The tax on an equity-securities gain and the
+    one-off items a company excludes appear only in the release text, which is why a
+    bridge built from structured data alone cannot reproduce the filer's own numbers.
+
+    Two kinds of item, taxed differently, and the distinction is the point:
+
+    * `gain_after_tax` is the *after-tax* effect of a gain, so it is removed as
+      stated. `tax_on_gain` is carried alongside so the table can show the working.
+    * `non_deductible_items` is a pre-tax amount whose add-back creates no tax
+      benefit — a regulatory fine is generally not deductible. It is added back at
+      full value, with no rate applied, which is the opposite treatment and the
+      reason a single netting rate cannot be right for both.
+    """
+
+    quarter: str = ""
+    period_end: str = ""
+    source: str = ""
+    equity_gain: float | None = None
+    tax_on_gain: float | None = None
+    gain_after_tax: float | None = None
+    performance_fees: float | None = None
+    eps_effect: float | None = None
+    non_deductible_items: float | None = None
+    non_deductible_label: str = ""
+
+
 class QuarterlyEps(BaseModel):
     """One quarter's GAAP and adjusted EPS, with the bridge that produced it.
 

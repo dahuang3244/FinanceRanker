@@ -575,8 +575,54 @@ def _fiscal_label(start: str, end: str) -> str:
     return f"{a.isoformat()} → {b.isoformat()}"
 
 
+def disclosed_quarters(facts: dict, series, *, limit: int = QUARTERS,
+                       fetcher=None) -> dict[str, object]:
+    """What the releases stated for the newest quarters, keyed by period end.
+
+    `fetcher(accession, quarter, end)` returns what one release disclosed, or None.
+    Every quarter is attempted and the ones that fail are simply absent, so a filer
+    whose wording does not match keeps the calculated bridge for that quarter rather
+    than losing the whole series.
+    """
+    if fetcher is None or not facts:
+        return {}
+    ordered = sorted(series, key=lambda pair: pair[1], reverse=True)[:limit]
+    out: dict[str, object] = {}
+    for start, end in ordered:
+        filed = _filed_for(facts, start, end)
+        if not filed:
+            continue
+        try:
+            value = fetcher(filed, _quarter_label(start, end), end)
+        except Exception:  # noqa: BLE001 - the calculated bridge stands in
+            continue
+        if value is not None:
+            out[end] = value
+    return out
+
+
+def _filed_for(facts: dict, start: str, end: str) -> str | None:
+    """When the filing that reported this quarter was filed.
+
+    The date is what locates the earnings release. The accession on the fact belongs
+    to the 10-Q, and the release is filed separately on an 8-K — so the accession
+    leads to a filing with no release in it, and the filing *date* is what pairs the
+    quarter with the right 8-K.
+    """
+    for tag in EPS_TAGS:
+        node = facts.get(tag)
+        if not node:
+            continue
+        for row in _unit_series(node, ("USD/shares",)):
+            if row.get("start") == start and row.get("end") == end:
+                filed = row.get("filed")
+                if filed:
+                    return str(filed)
+    return None
+
+
 def quarterly_eps(ticker: str, *, quarters: int = QUARTERS,
-                  analyst=None) -> list[QuarterlyEps]:
+                  analyst=None, disclosed=None) -> list[QuarterlyEps]:
     """The most recent quarters, newest first, with a per-quarter bridge.
 
     Each quarter gets its own adjusted figure. The annual bridge divides a year of
@@ -592,6 +638,12 @@ def quarterly_eps(ticker: str, *, quarters: int = QUARTERS,
     machine-readable form. The distinction is carried on every row rather than
     hidden, so a reader is never shown an unbridged quarter as though it were
     bridged.
+
+    `disclosed` maps a period end to what the earnings release stated about its own
+    adjustments, and takes precedence where present. The release is authoritative:
+    it gives the after-tax effect of a gain as the company computed it, rather than
+    a rate this module applies, and it separates items that attract no tax benefit —
+    a regulatory fine is not deductible, so adding it back creates none.
     """
     facts = _facts(ticker)
     series, marks = _quarter_series(facts) if facts else ([], [])
@@ -688,7 +740,38 @@ def quarterly_eps(ticker: str, *, quarters: int = QUARTERS,
                 else (adjusted_income or 0.0) + net
             applied += 1
 
-        if use_pretax and applied:
+        # Where the release stated its own adjustments, those figures win. Removing
+        # the after-tax effect the company reported, and adding back a
+        # non-deductible item at full value, is the company's own arithmetic rather
+        # than a rate this module applies — and a fine is generally not deductible,
+        # so adding it back creates no tax benefit to net off.
+        stated = (disclosed or {}).get(end)
+        if stated is not None and stated.gain_after_tax is not None:
+            lines = []
+            adjusted_income = (net_income or 0.0) - stated.gain_after_tax
+            lines.append(NonGaapLine(
+                key="equity_gain_after_tax",
+                label="Equity securities gain, after tax",
+                value=-stated.gain_after_tax, is_addback=False,
+                source="8-K exhibit (release text)",
+            ))
+            if stated.performance_fees:
+                # Already inside the after-tax effect the release reports, so shown
+                # for explanation and not subtracted again.
+                lines.append(NonGaapLine(
+                    key="performance_fees", label="Performance fees included above",
+                    value=-stated.performance_fees, is_addback=False,
+                    source="8-K exhibit (release text)",
+                ))
+            if stated.non_deductible_items:
+                adjusted_income += stated.non_deductible_items
+                lines.append(NonGaapLine(
+                    key="non_deductible",
+                    label=f"{stated.non_deductible_label or 'Fine'} (not deductible, full amount)",
+                    value=stated.non_deductible_items, is_addback=True,
+                    source="8-K exhibit (release text)",
+                ))
+        elif use_pretax and applied:
             # The tax follows the filer's own position. The structural rate is used
             # rather than the quarter's blended one, because a large pre-tax gain
             # inflates the blended rate and would over-tax the removal.
