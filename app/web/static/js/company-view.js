@@ -451,10 +451,13 @@ const FRCompany = (() => {
   }
 
   /* ------------------------------------------------- quarterly EPS, last 4 */
-  /* Quarterly, not annual, because the adjustments are period-specific: Alphabet's
-     equity-security gains run from $1.3bn to $99bn across six consecutive
-     quarters, so a year of adjustments divided by a year of shares describes no
-     period a reader can act on. Each card expands to its own bridge. */
+  /* Quarterly, not annual, because the adjustments are period-specific: one quarter
+     can carry a whole year's gain, and a year of adjustments divided by a year of
+     shares describes no period a reader can act on. The lede is deliberately generic.
+     It used to name Alphabet's equity-security gains as the illustration, which meant
+     every other company's card carried a note about Alphabet — Meta's page explained
+     itself with a figure that had nothing to do with Meta. An illustration drawn from
+     one ticker does not belong in text shown for all of them. */
   function quarterCard(q, index) {
     const adjusted = q.adjusted_eps;
     const gaap = q.gaap_eps;
@@ -563,6 +566,11 @@ const FRCompany = (() => {
     }
 
     const series = quarters.slice().reverse();   // oldest first for reading order
+    // The count is stated rather than implied. Three quarters can look like a
+    // rendering fault, and the reason is worth saying: a quarter is only shown when
+    // the filer tagged it or it can be derived from two cumulative periods the filer
+    // filed together, so a gap in the filings shows as a gap here.
+    const short = quarters.length < 4;
     return `<section class="glass dimblock">
       <header class="dimhead">
         <span class="dimico">${icon("clock")}</span>
@@ -576,6 +584,7 @@ const FRCompany = (() => {
         </div>
       </header>
       <div class="epsgrid">${series.map((q, i) => quarterCard(q, i)).join("")}</div>
+      ${short ? `<p class="hint" style="margin-top:12px">${escapeHtml(t("co.eps.short"))}</p>` : ""}
       <p class="hint" style="margin-top:12px">${escapeHtml(t("co.eps.foot"))}</p>
     </section>`;
   }
