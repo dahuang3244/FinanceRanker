@@ -241,6 +241,48 @@ def _cell_number(text: str) -> float | None:
     return -value if negative else value
 
 
+# ---------------------------------------------------------------------------
+# Sources surveyed for a quarter the filer did not tag in XBRL
+#
+# Recorded because the survey took real work and its conclusion is not obvious: no
+# free source states a missing quarter's *GAAP* EPS per share.
+#
+# SEC-derived sources cannot, by construction — they are all built from the same XBRL,
+# so an untagged fact is absent from all of them. Verified rather than assumed:
+#
+#   frames API, EarningsPerShareDiluted, CY2025Q3  -> 4429 filers, 0 for Qualcomm
+#   companyconcept for Qualcomm                    -> no quarter-length fact between
+#                                                     2025-06-29 and 2025-12-28
+#
+# That is the whole point: Qualcomm's quarter ending 2025-09-28 is in its release and
+# its 10-K income statement, and nowhere in the structured data.
+#
+# Two keyless sources do carry it, and both were checked:
+#
+#   api.nasdaq.com/api/quote/{T}/eps
+#       20/20 pool tickers, four periods each, with a consensus beside every actual.
+#       Keyless and free. Its figures are the adjusted ones companies guide on rather
+#       than GAAP: Micron's Aug-2025 quarter is 2.86, its non-GAAP figure.
+#
+#   the analyst feed already used for TSMC
+#       42 quarters across the pool beyond what XBRL supplies, covering all the gaps
+#       above, and it needs no new source or licence.
+#
+# Neither may be merged into the GAAP bridge. Both report an adjusted actual against a
+# non-GAAP consensus, and measured against the app's GAAP figure they disagree on 20 of
+# the 50 quarters both carry — Qualcomm's March 2026 quarter reads 2.65 in the feed
+# against a GAAP 6.88 that a tax benefit distorted. That is the same mixed-basis
+# comparison that produced a 169% "beat" earlier in this project, so the two bases are
+# kept apart deliberately: a filled quarter must be labelled an adjusted measure and
+# never presented as the GAAP bridge.
+#
+# One caution. The two sources disagree with each other on historical quarters — Meta's
+# September 2025 is 1.05 in the analyst feed and 7.25 on Nasdaq — which points at
+# restated figures on one side or both. Filling a *recent* gap is low risk, since the
+# three agree there for most filers. Back-filling history from either is not, and was
+# not attempted.
+# ---------------------------------------------------------------------------
+
 # Header language that says how long the columns beneath it run.
 _QUARTER_HEADER = re.compile(
     r"three\s+months|3\s+months|quarter\s+ended|3rd\s+qtr|2nd\s+qtr|1st\s+qtr|"
