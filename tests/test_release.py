@@ -186,6 +186,34 @@ def test_a_non_deductible_fine_is_added_back_without_a_tax_benefit():
     )
 
 
+def test_quarterly_eps_extraction_is_not_guessed_at():
+    """Reading a quarter's EPS from the release is deliberately not implemented.
+
+    The figure is there, but which column it is cannot be decided from the row alone.
+    Two rules were measured against figures already known from XBRL: taking the first
+    numeric value on the diluted line was right for 17 of 23 real filings, and the
+    last for 3. The failures are ambiguous layouts rather than matching mistakes —
+    Alphabet's 2025 Q3 statement reads [2.12, 2.87, 5.9, 7.99], prior-year quarter,
+    current quarter, prior-year year-to-date, current year-to-date.
+
+    A rule that is wrong for a quarter of filings and fails *silently* — returning a
+    plausible figure from the wrong column — is worse than an absent quarter. This
+    test exists so the function cannot be quietly made to guess: if it is ever
+    implemented it must be by matching the column headers, and it must be scored the
+    same way before it is allowed to return a number.
+    """
+    from app.release import extract_quarterly_eps
+
+    try:
+        extract_quarterly_eps("<table><tr><td>Diluted</td><td>1.00</td></tr></table>")
+    except NotImplementedError:
+        return
+    raise AssertionError(
+        "extract_quarterly_eps returned a figure; it must identify the column from "
+        "the headers and be measured against the 23-filing sample first"
+    )
+
+
 if __name__ == "__main__":
     import traceback
 

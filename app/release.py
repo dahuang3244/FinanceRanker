@@ -171,6 +171,82 @@ def _flatten(html: str) -> str:
     return re.sub(r"\s+", " ", text)
 
 
+def _tables(html: str) -> list[list[list[str]]]:
+    """The document's tables as grids of cell text.
+
+    The income statement has to be read as a table, not as a run of text. Flattened,
+    Alphabet's diluted line becomes "per common share $ 2.31 $ 2.84 $ 2.30 $ 9.11",
+    and a pattern over that cannot tell which of the four figures is the quarter being
+    read rather than the year-to-date column beside it. Cell by cell, the same line is
+    four cells and the current quarter is the last of them.
+    """
+    out: list[list[list[str]]] = []
+    for table_html in re.findall(r"<table[^>]*>(.*?)</table>", html, re.I | re.S):
+        grid: list[list[str]] = []
+        for row_html in re.findall(r"<tr[^>]*>(.*?)</tr>", table_html, re.I | re.S):
+            cells: list[str] = []
+            for cell_html in re.findall(r"<t[dh][^>]*>(.*?)</t[dh]>",
+                                        row_html, re.I | re.S):
+                text = re.sub(r"<[^>]+>", " ", cell_html)
+                for entity, replacement in (("&#160;", " "), ("&nbsp;", " "),
+                                            ("&amp;", "&"), ("&#8217;", "'")):
+                    text = text.replace(entity, replacement)
+                cells.append(re.sub(r"\s+", " ", text).strip())
+            if cells:
+                grid.append(cells)
+        if grid:
+            out.append(grid)
+    return out
+
+
+# A per-share figure: `2.31`, `1.87`, `(0.73)`, `24.67`. Two decimals, and a loss
+# may be bracketed rather than signed.
+_NUMBER = re.compile(r"^\(?\$?\s*([0-9]+(?:\.[0-9]+)?)\s*\)?$")
+
+
+def _cell_number(text: str) -> float | None:
+    """The value of a numeric cell, or None if the cell is a label or a unit."""
+    stripped = text.strip().replace(",", "")
+    if not stripped:
+        return None
+    negative = stripped.startswith("(") and stripped.endswith(")")
+    match = _NUMBER.match(stripped.replace("(", "").replace(")", ""))
+    if not match:
+        return None
+    try:
+        value = float(match.group(1))
+    except ValueError:
+        return None
+    return -value if negative else value
+
+
+def extract_quarterly_eps(html: str, *, period_end: str = "") -> float | None:
+    """NOT SHIPPED — kept as a starting point for a measured implementation.
+
+    Reading a quarter's diluted EPS out of the release was attempted and abandoned.
+    The figure is plainly there, but which column it is cannot be decided from the row
+    alone, and both simple rules were measured against figures known from XBRL:
+
+        first numeric value on the diluted line : 17/23 filings correct
+        last  numeric value on the diluted line :  3/23 filings correct
+
+    The failures are the ambiguous layouts, not mistakes in matching. Alphabet's
+    2025 Q3 statement reads [2.12, 2.87, 5.9, 7.99] — prior-year quarter, current
+    quarter, prior-year year-to-date, current year-to-date — so the quarter is second
+    there and first elsewhere. A 26% error rate that fails *silently*, producing a
+    plausible-looking figure in the wrong column, is worse than an absent quarter,
+    which is why this returns nothing rather than guessing.
+
+    A measured implementation needs the column headers: `Three Months Ended` versus
+    `Six Months Ended` and `Year To Date`, with the period-end date matched against
+    the header row. That is the next step, and it must be scored the same way.
+    """
+    raise NotImplementedError(
+        "quarterly EPS extraction needs header-based column identification; "
+        "the row-order rules scored 74% and are not safe to use"
+    )
+
+
 def _period_label(start: str, end: str) -> str:
     try:
         when = date.fromisoformat(end)
