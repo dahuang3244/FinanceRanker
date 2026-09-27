@@ -712,6 +712,130 @@ def _filed_for(facts: dict, start: str, end: str) -> str | None:
     return None
 
 
+def _months_touched(start: str, end: str) -> set[str]:
+    """The calendar months a fiscal period covers, as "YYYY-MM".
+
+    Both ends and everything between. A quarter normally spans three months and its
+    label month is one of them, but a fiscal calendar that opens or closes a few days
+    into a neighbouring month makes the feed's label differ from the period end: a
+    quarter ending 2026-04-03 is labelled March by the feed. Treating every month the
+    period touches as occupied is what stops the same quarter being added twice.
+    """
+    if not end:
+        return set()
+    try:
+        last = date.fromisoformat(end)
+        first = date.fromisoformat(start) if start else last
+    except ValueError:
+        return {end[:7]} if len(end) >= 7 else set()
+    months: set[str] = set()
+    year, month = first.year, first.month
+    while (year, month) <= (last.year, last.month):
+        months.add(f"{year:04d}-{month:02d}")
+        month += 1
+        if month > 12:
+            month = 1
+            year += 1
+    return months
+
+
+def _fill_from_analyst(rows: list[QuarterlyEps], analyst, *, quarters: int,
+                       all_periods: list[tuple[str, str]]) -> list[QuarterlyEps]:
+    """Add quarters XBRL does not carry, from the analyst feed, clearly labelled.
+
+    A filer can omit a quarter from its tagged data entirely. Qualcomm's quarter ending
+    2025-09-28 is in its release and its 10-K income statement and nowhere in the
+    structured data, because every one of its quarterly facts comes from a 10-Q and no
+    10-Q covers that period. No SEC-derived source can supply it, since they are all
+    built from the same XBRL. The analyst feed can, and it is already in the app.
+
+    **What these rows are, and are not.** The feed pairs a reported actual with the
+    consensus it was measured against, and both are the adjusted basis that companies
+    guide on — measured against the app's GAAP figure the two disagree on 20 of the 50
+    quarters both carry. So a filled row:
+
+      * carries no adjusted-EPS figure of its own and no bridge. `adjusted_eps` stays
+        None and `has_adjustments` stays False, because this module has not computed
+        either and inventing them would present a mixed-basis comparison as a
+        derivation;
+      * carries the feed's own actual and estimate together, which *are* like-for-like
+        with each other, and states its basis so a reader can see which pair it is;
+      * is never allowed to displace a quarter XBRL supplied, and never duplicated by
+        one.
+
+    Matching is by calendar month and nothing looser. An earlier version joined
+    consensus to a quarter on the month alone and attached a figure belonging to a
+    different period, turning a 3.3% beat into 168%; a month that already has a quarter
+    is therefore skipped rather than reused.
+    """
+    if analyst is None:
+        return rows
+    history = getattr(analyst, "earnings_history", None) or []
+    if not history:
+        return rows
+
+    # A feed quarter refers to the same period as a row when its end is within days of
+    # that row's *fiscal* end. Comparing end dates is what makes this safe, and month
+    # occupancy is too blunt to use instead: a quarter spans three months, so treating
+    # every month it touches as taken marks most of the calendar and stops the feed
+    # filling anything, while a single-month test misses the spill — Coca-Cola's first
+    # quarter of 2026 ends 2026-04-03 and is labelled March by the feed.
+    occupied: list[date] = []
+    for row in rows:
+        try:
+            occupied.append(date.fromisoformat(row.end))
+        except ValueError:
+            continue
+    for _start, end in all_periods:
+        try:
+            occupied.append(date.fromisoformat(end))
+        except ValueError:
+            continue
+
+    added: list[QuarterlyEps] = []
+    for entry in history:
+        when = getattr(entry, "quarter_end", None)
+        if when is None:
+            continue
+        actual = getattr(entry, "eps_actual", None)
+        # An upcoming quarter is published with an earnings figure of exactly zero,
+        # which is placeholder rather than a result — a filer does not report EPS of
+        # 0.00 and mean it as a quarter's earnings. Taken as a figure it would list a
+        # future quarter as though it had been reported, at zero, and produce a 100%
+        # miss against its own estimate.
+        if actual is None or actual == 0:
+            continue
+        # Within a few weeks of a period already held means the same quarter, not a
+        # new one. The window is generous enough for a 52/53-week calendar, where a
+        # fiscal quarter can end several days from the calendar one the feed names,
+        # and far tighter than a quarter so two distinct periods cannot collide.
+        if any(abs((when - held).days) <= 21 for held in occupied):
+            continue
+        estimate = getattr(entry, "eps_estimate", None)
+        added.append(QuarterlyEps(
+            label=f"{when.year} Q{(when.month - 1) // 3 + 1}",
+            start="",
+            end=when.isoformat(),
+            fiscal_label=when.isoformat(),
+            # Kept as the *reported* figure rather than called GAAP. The feed's
+            # actuals are the adjusted basis, so naming it GAAP would be a claim this
+            # module cannot support.
+            gaap_eps=actual,
+            consensus_eps=estimate,
+            surprise_pct=getattr(entry, "surprise_pct", None),
+            surprise_actual=actual,
+            surprise_basis="analyst-reported",
+            source="analyst",
+        ))
+        occupied.append(when)
+
+    if not added:
+        return rows
+    merged = rows + added
+    merged.sort(key=lambda row: row.end, reverse=True)
+    return merged[:max(1, quarters)]
+
+
 def quarterly_eps(ticker: str, *, quarters: int = QUARTERS,
                   analyst=None, disclosed=None) -> list[QuarterlyEps]:
     """The most recent quarters, newest first, with a per-quarter bridge.
@@ -744,7 +868,6 @@ def quarterly_eps(ticker: str, *, quarters: int = QUARTERS,
 
     if not series:
         return _from_analyst(analyst, quarters=quarters)
-
     # Tax and pre-tax income across the whole window, so the structural rate can be
     # derived from quarters the adjustment did not distort.
     spread = [
@@ -907,7 +1030,11 @@ def quarterly_eps(ticker: str, *, quarters: int = QUARTERS,
             has_adjustments=applied > 0,
             source="sec",
         ))
-    return out
+    # Whatever XBRL could not supply is filled from the analyst feed, labelled, rather
+    # than left as a gap — see `_fill_from_analyst` for what those rows do and do not
+    # claim. Applied here so both the report endpoint and the annual bridge see the
+    # same series.
+    return _fill_from_analyst(out, analyst, quarters=quarters, all_periods=series)
 
 
 def _distortion(tax_rate: float | None, pretax: float | None,
@@ -981,7 +1108,16 @@ def quarterly_bridge(ticker: str) -> NonGaapReconciliation | None:
     quarters = quarterly_eps(ticker)
     if not quarters:
         return None
-    newest = quarters[0]
+    # The newest quarter *carrying a bridge*, not simply the newest. A quarter filled
+    # from the analyst feed has no lines, no net income and no share count, so taking
+    # the newest row unconditionally would build a reconciliation of nulls for any
+    # filer whose latest quarter happens not to be tagged — and would silently replace
+    # a complete bridge with an empty one.
+    bridged = [row for row in quarters
+               if row.adjusted_net_income is not None or row.lines]
+    if not bridged:
+        return None
+    newest = bridged[0]
     return NonGaapReconciliation(
         currency="USD",
         lines=newest.lines,
