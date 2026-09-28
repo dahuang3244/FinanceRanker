@@ -157,12 +157,52 @@ class JobManager:
             job.status = "done"
             job.message = f"completed: {len(rows)} peers, {len(errors)} failed"
             job.emit("done", rows=len(rows), errors=len(errors), run_id=job.run_id)
+            # Quarterly EPS is fetched per company page, and the first view of a cold
+            # page waited 8 to 25 seconds for it — which reads as the panel being
+            # absent rather than slow, and was reported as exactly that. Nothing about
+            # it needs to be lazy: the filings and releases it reads are the same ones
+            # the refresh has just been through, so warming it here costs a few seconds
+            # in the background and removes the wait from every page thereafter.
+            #
+            # This runs on the refresh thread, so the synchronous call is made
+            # directly; there is no event loop to block.
+            self._warm_quarterly(job)
         except Exception as exc:
             log.exception("refresh job failed")
             job.status = "failed"
             job.message = str(exc)
             job.finished_at = datetime.now()
             job.emit("error", message=str(exc))
+
+    def _warm_quarterly(self, job: Job) -> None:
+        """Compute each ticker's quarterly EPS so the first page view is instant.
+
+        Failures are swallowed deliberately: this is a cache warm, and a ticker whose
+        filings cannot be read will compute on demand exactly as it did before. One
+        unavailable filer must not mark a completed refresh as failed.
+        """
+        from app.providers.yahoo_analyst import get_analyst_detail
+        from app.quarterly import quarterly_eps
+
+        warmed = 0
+        for index, ticker in enumerate(job.tickers, start=1):
+            job.message = f"{ticker}: quarterly EPS {index}/{len(job.tickers)}"
+            job.emit("progress", ticker=ticker, status="quarterly EPS",
+                     done=job.done, total=job.total)
+            try:
+                analyst = None
+                try:
+                    analyst = get_analyst_detail(ticker, allow_yahoo=True)
+                except Exception:  # noqa: BLE001 - the SEC path does not need it
+                    analyst = None
+                rows = quarterly_eps(ticker, quarters=8, analyst=analyst)
+                if rows:
+                    warmed += 1
+            except Exception as exc:  # noqa: BLE001 - compute on demand later
+                log.debug("quarterly warm failed for %s: %s", ticker, exc)
+        job.message = (f"completed: {len(job.rows or [])} peers; "
+                       f"quarterly EPS ready for {warmed}")
+        job.emit("warning", message=f"quarterly EPS precomputed for {warmed} tickers")
 
 
 manager = JobManager()

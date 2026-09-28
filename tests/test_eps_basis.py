@@ -181,6 +181,59 @@ def test_the_analyst_join_attaches_only_when_the_sources_agree():
     assert "continue" in source
 
 
+def test_a_refresh_precomputes_quarterly_eps():
+    """Fetching must not leave the first company page waiting.
+
+    Quarterly EPS was fetched lazily per page, and the first view of a cold page took
+    seconds — long enough to read as the panel being missing rather than loading, which
+    is how it was reported. Nothing about it needed to be lazy: it reads the same
+    filings and releases the refresh has just been through.
+    """
+    import inspect
+
+    from app import jobs
+
+    source = inspect.getsource(jobs)
+    assert "_warm_quarterly" in source, (
+        "the refresh must precompute quarterly EPS for the pool it just fetched"
+    )
+    run_source = inspect.getsource(jobs.JobManager._run)
+    assert "_warm_quarterly(job)" in run_source, (
+        "and it must be called by the refresh, not merely defined"
+    )
+    warm_source = inspect.getsource(jobs.JobManager._warm_quarterly)
+    assert "quarterly_eps" in warm_source
+    # A warm failure must not fail the refresh: the figure still computes on demand.
+    assert "except Exception" in warm_source, (
+        "one unreadable filer must not mark a completed refresh as failed"
+    )
+
+
+def test_the_quarter_panel_shows_a_loading_state():
+    """An empty section and a loading one must not look the same.
+
+    The quarter panel rendered nothing until its payload arrived, while the record panel
+    beside it showed a skeleton. On a slow fetch that made a present-but-pending panel
+    indistinguishable from a missing one.
+    """
+    from pathlib import Path
+
+    # Resolved from this file, not the working directory: the suite is run from
+    # `tests/` by the build script and from the repo root by hand, and a relative path
+    # works in only one of them.
+    root = Path(__file__).resolve().parent.parent
+    source = (root / "app/web/static/js/company-view.js").read_text(encoding="utf-8")
+    assert "function quarterSkeleton" in source, (
+        "the quarter panel needs a loading state of its own"
+    )
+    mount = source.split("async function mountQuarters", 1)[1].split("function ", 1)[0]
+    assert "quarterSkeleton()" in mount, (
+        "the skeleton must be rendered before the fetch, not after"
+    )
+    i18n = (root / "app/web/static/js/i18n.js").read_text(encoding="utf-8")
+    assert "co.eps.loading" in i18n, "the loading text needs both languages"
+
+
 if __name__ == "__main__":
     import traceback
 

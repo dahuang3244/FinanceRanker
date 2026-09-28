@@ -624,6 +624,11 @@ const FRCompany = (() => {
     const host = $("#quarterSection");
     if (!host) return;
     const token = ++quarterToken;
+    // A skeleton while it loads, matching the record panel below. Without one the
+    // section stayed empty until the payload arrived, which on a cold page took
+    // several seconds and read as the panel being missing rather than loading —
+    // reported as "there is no EPS part", when the fetch was simply still running.
+    host.innerHTML = quarterSkeleton();
     try {
       const payload = await api.eps(ticker, 4);
       if (token !== quarterToken) return;
@@ -633,6 +638,20 @@ const FRCompany = (() => {
       host.innerHTML = "";
       console.warn("quarterly EPS fetch failed", err);
     }
+  }
+
+  function quarterSkeleton() {
+    return `<section class="glass dimblock">
+      <header class="dimhead">
+        <span class="dimico">${icon("clock")}</span>
+        <div class="dimtitle">
+          <h2>${t("co.eps.title")}<em>${t("co.eps.subtitle")}</em></h2>
+          <p class="hint">${escapeHtml(t("co.eps.loading"))}</p>
+        </div>
+      </header>
+      <div class="skeleton line" style="width:26%;margin-top:14px"></div>
+      <div class="skeleton" style="height:104px;margin-top:14px"></div>
+    </section>`;
   }
 
   /* ------------------------------------------------------- record mount */

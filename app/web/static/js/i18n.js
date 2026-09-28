@@ -593,6 +593,8 @@ const FRI18n = (() => {
                     "GAAP and adjusted EPS quarter by quarter. Adjustments are period-specific, so a year of them divided by a year of shares hides which quarter carried the gain. Open any quarter to see its bridge."],
     "co.eps.short": ["不足四季是因为公司没有在 XBRL 里标记该季，也无法由同一份申报文件里的两个累计期间相减得出。这里宁可留空，也不补一个可能错的数字。",
                      "Fewer than four quarters because the filer did not tag that quarter in XBRL and it cannot be derived from two cumulative periods filed together. A quarter is left out rather than filled with a figure that could be wrong."],
+    "co.eps.loading": ["正在读取申报与财报新闻稿，通常几秒；抓取时已预先算好，正常应立刻显示。",
+                        "Reading the filings and the earnings release; usually a few seconds. The refresh precomputes this, so a normal page shows it immediately."],
     "co.eps.gaap": ["GAAP", "GAAP"],
     "co.eps.adjusted": ["调整后", "Adjusted"],
     "co.eps.beat": ["超出预期", "Beat"],
