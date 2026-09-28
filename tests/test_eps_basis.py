@@ -146,9 +146,14 @@ def test_a_default_refresh_preserves_the_last_universe():
     assert "store.list_runs" in source, (
         "the refresh must consult the previous run's universe"
     )
-    assert "previous if len(previous) > 1 else settings.ticker_list" in source, (
-        "the previous universe must win when usable, with the configured default "
-        "only as a fallback"
+    assert "previous if previous else settings.ticker_list" in source, (
+        "the previous universe must win whenever one is recorded, with the configured "
+        "default only as a fallback"
+    )
+    assert "len(previous) > 1" not in source, (
+        "a length test confuses 'deliberately small' with 'missing': a user who narrows "
+        "their list on purpose would have it replaced by the default, which is the same "
+        "silent substitution this guard exists to prevent"
     )
     assert 'first.get("tickers") if isinstance(first, dict)' in source, (
         "list_runs may return a dict or a model, so both shapes must be read"

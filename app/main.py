@@ -326,7 +326,12 @@ async def refresh(payload: dict | None = None) -> dict:
                 ]
         except Exception:  # noqa: BLE001 - fall back to the configured default
             previous = []
-        tickers = previous if len(previous) > 1 else settings.ticker_list
+        # Any non-empty recorded pool is reused, including one of a single ticker. The
+        # guard exists so a refresh does not *silently* shrink a hand-picked pool, and a
+        # `> 1` test confuses "deliberately small" with "missing": a user who narrows
+        # their list down on purpose would have it replaced by the default thirteen,
+        # which is the same silent substitution the guard was added to prevent.
+        tickers = previous if previous else settings.ticker_list
     elif isinstance(raw, str):
         tickers = [t for t in raw.replace("\n", ",").split(",") if t.strip()]
     else:
