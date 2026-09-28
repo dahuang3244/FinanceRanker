@@ -633,6 +633,47 @@ class PreviewBuilder:
         return series.get(periods[offset])
 
     # -- main -------------------------------------------------------------- #
+    # ------------------------------------------------------------------ basis
+    # `years` runs newest-first, so its first entry is the current fiscal year.
+    _ANNUAL_CATEGORIES = frozenset({
+        "growth", "profitability", "cashflow", "cash", "balance", "pershare",
+        "valuation", "market_risk", "efficiency", "leverage",
+    })
+
+    def _basis_for(self, category: str, years: list[str]) -> str:
+        """What a group's figures are measured over, stated rather than implied.
+
+        The panel put annual statement figures next to a point-in-time price with
+        nothing saying which was which, so the basis of a metric like ROE was genuinely
+        ambiguous — annual, trailing twelve months and the latest quarter are all fair
+        readings of the same label. Naming it costs one line and removes the doubt.
+        """
+        newest = years[0] if years else "the latest fiscal year"
+        if category == "market":
+            return "point in time"
+        return f"annual · {newest}"
+
+    def _basis_note_for(self, category: str, years: list[str]) -> str:
+        newest = years[0] if years else "the latest fiscal year"
+        annual = (f"the annual statements for {newest} and the four years before it. "
+                  f"Not trailing twelve months and not a single quarter — every line "
+                  f"names its own period, and the formula column gives the derivation.")
+        if self.lang == "en":
+            if category == "market":
+                return ("the latest daily close and the figures derived from it; not a "
+                        "fiscal-year measure")
+            if category in self._ANNUAL_CATEGORIES:
+                return annual
+            return f"annual statements, newest {newest}"
+        market_zh = "最近一个交易日收盘价及由其派生的指标，非财年口径。"
+        annual_zh = (f"采用 {newest} 及其前四个财年的年度报表口径。不是 LTM（滚动十二个月），"
+                     f"也不是单季；每行自带期间标签，「公式 / 来源」列给出推导。")
+        if category == "market":
+            return market_zh
+        if category in self._ANNUAL_CATEGORIES:
+            return annual_zh
+        return f"年度报表口径，最新为 {newest}"
+
     def build(self, price_points: int = 260) -> PreviewPayload:
         periods = self.data.fiscal_years(limit=6)
         if not periods:
@@ -681,6 +722,8 @@ class PreviewBuilder:
                 title=(CATEGORY_EN.get(cat) if self.lang == "en" else None)
                 or CATEGORY_TITLES.get(cat, cat),
                 items=items,
+                basis=self._basis_for(cat, years),
+                basis_note=self._basis_note_for(cat, years),
             )
             for cat, items in by_category.items()
         ]

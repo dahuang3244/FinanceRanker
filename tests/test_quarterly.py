@@ -508,6 +508,54 @@ def test_no_displayed_figure_is_a_cumulative_amount():
                 )
 
 
+def test_a_mark_to_market_gain_is_removed_from_adjusted_eps():
+    """Amazon's Anthropic gain, removed at its own scale.
+
+    The release states "non-operating pre-tax other income of $53.4 billion, primarily
+    from our investments in Anthropic" while the narrow equity-securities tag carries
+    $1.3 billion. Removing only the narrow figure took 2% of the item out and reported
+    an adjusted EPS of 5.71 where removing the item gives 1.97 — against a consensus of
+    1.83 that read as a 215% beat, a GAAP-against-adjusted mismatch wearing a different
+    hat.
+
+    Skipped offline.
+    """
+    from app.quarterly import quarterly_eps
+
+    try:
+        rows = quarterly_eps("AMZN", quarters=4)
+    except Exception:  # noqa: BLE001 - offline
+        return
+    row = next((r for r in rows if r.label == "2026 Q2"), None)
+    if row is None or row.adjusted_eps is None:
+        return
+    assert row.gaap_eps is not None and row.gaap_eps > 5.0
+    assert row.adjusted_eps < 3.0, (
+        f"adjusted EPS {row.adjusted_eps} is still dominated by the $53.4bn "
+        f"non-operating gain; removing it should give about 1.9"
+    )
+    removed = [line for line in row.lines
+               if abs(line.value) > 30e9 and line.value < 0]
+    assert removed, "the non-operating removal must appear as its own line"
+
+
+def test_non_operating_income_is_not_removed_twice():
+    """Where a filer tags both, the equity figure is a component of the broader line.
+
+    Amazon tags $1.3bn as an equity gain and $53.4bn as other non-operating income, and
+    the second contains the first. Removing both would take the same gain out twice and
+    understate adjusted EPS.
+    """
+    import inspect
+
+    from app import quarterly as module
+
+    source = inspect.getsource(module.quarterly_eps)
+    assert 'if key == "equity_securities_gain" and broad_other:' in source, (
+        "the component must be skipped when the total is present"
+    )
+
+
 if __name__ == "__main__":
     import traceback
 

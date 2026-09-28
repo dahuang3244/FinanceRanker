@@ -163,6 +163,15 @@
     return fallback ?? key;
   }
 
+  /* The period a group's figures cover, with the reason spelled out.
+     The panel previously showed annual statement figures beside a point-in-time price
+     with nothing distinguishing them, so the basis of a metric like ROE was ambiguous —
+     annual, trailing twelve months and the latest quarter all read the same. */
+  function basisLine(group) {
+    const tag = group.basis ? `${group.basis} — ` : "";
+    return `${tag}${group.basis_note || ""}`;
+  }
+
   const state = {
     payload: null,      // current preview payload
     catalog: null,      // static parameter catalogue
@@ -408,7 +417,9 @@
       }).join("");
       return `<div class="pv-group">
         <div class="section-head">
-          <div><h2 style="font-size:13.5px">${escapeHtml(categoryOf(g.category, g.title))}</h2></div>
+          <div><h2 style="font-size:13.5px">${escapeHtml(categoryOf(g.category, g.title))}</h2>
+            ${g.basis ? `<p class="hint">${escapeHtml(basisLine(g))}</p>` : ""}
+          </div>
           <div class="tools"><span class="pv-count">${t("pv.calculatedCount", { ok, total: g.items.length })}</span></div>
         </div>
         <div class="glass tablewrap">

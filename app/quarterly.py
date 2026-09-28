@@ -86,6 +86,20 @@ ADJUSTMENT_TAGS: list[tuple[str, str, str, bool, bool]] = [
     # `after_tax`: True where the tagged value is already net of tax, so applying
     #   the effective rate again would tax it twice.
     ("equity_securities_gain", "Equity securities gain", "remove", False, False),
+    # Non-operating income is removed as its own line, on the same reasoning an
+    # analyst applies to a mark-to-market gain: it is not trading profit.
+    #
+    # Amazon's June 2026 quarter is why. Its release states "non-operating pre-tax
+    # other income of $53.4 billion, primarily from our investments in Anthropic",
+    # while the narrow equity-securities tag carries $1.3bn — so the app removed 2% of
+    # the item and reported an adjusted EPS of 5.71 against the 1.88 that removing the
+    # item produces. Against a consensus of 1.83 that read as a 215% beat.
+    #
+    # Only added when the broad tag is absent from a filer's data, because where both
+    # exist the equity tag is a *component* of the non-operating line and counting both
+    # would remove the same gain twice.
+    ("other_nonoperating_income", "Other non-operating income", "remove",
+     False, False),
     ("restructuring", "Restructuring charges", "add", False, False),
     ("impairment", "Impairment loss", "add", False, False),
     ("amortization", "Amortization of intangibles", "add", False, False),
@@ -927,7 +941,15 @@ def quarterly_eps(ticker: str, *, quarters: int = QUARTERS,
         missing: list[str] = []
         adjusted_income = pretax if use_pretax else net_income
         applied = 0
+        # Where the broad non-operating line is present the equity-securities figure is
+        # one of its components, so removing both would take the same gain out twice.
+        # Amazon tags $1.3bn as an equity gain and $53.4bn as other non-operating
+        # income, and the second contains the first.
+        broad_other = _value_for(facts, _TAG_MAP["other_nonoperating_income"],
+                                 start, end, ("USD",))
         for key, label, direction, aggregate, after_tax in ADJUSTMENT_TAGS:
+            if key == "equity_securities_gain" and broad_other:
+                continue
             value = _value_for(facts, _TAG_MAP.get(key, ()), start, end, ("USD",),
                                aggregate=aggregate)
             if value is None or value == 0:

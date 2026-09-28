@@ -39,6 +39,12 @@ class ParamGroup(BaseModel):
     category: str
     title: str
     items: list[ParamValue] = Field(default_factory=list)
+    # What the group's figures are measured over. The panel showed annual figures
+    # beside point-in-time prices with nothing saying so, which leaves the basis of a
+    # metric like ROE genuinely ambiguous: annual, trailing twelve months and the
+    # latest quarter are all defensible readings of the same label.
+    basis: str = ""
+    basis_note: str = ""
 
 
 class FinancialLine(BaseModel):
