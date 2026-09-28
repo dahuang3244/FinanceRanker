@@ -234,6 +234,34 @@ def test_the_quarter_panel_shows_a_loading_state():
     assert "co.eps.loading" in i18n, "the loading text needs both languages"
 
 
+def test_a_restored_page_from_the_back_forward_cache_is_refreshed():
+    """Going Back must not resurrect a page from an older build.
+
+    Navigation is plain `<a href>`, so the browser may restore a page from its
+    in-memory cache on Back without running any load-time code. The load-time guard
+    therefore never sees it, and the page keeps the scripts it was first parsed with —
+    which is how a navigation entry removed several builds earlier kept reappearing
+    whenever someone went back to the ranking and opened another company.
+    """
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parent.parent
+    source = (root / "app/web/static/js/shell.js").read_text(encoding="utf-8")
+    assert 'addEventListener("pageshow"' in source, (
+        "a page restored from the back/forward cache needs its own check"
+    )
+    restored = source.split('addEventListener("pageshow"', 1)[1]
+    assert "event.persisted" in restored, (
+        "the restore is what matters, not every pageshow"
+    )
+    assert "fr-restored" in restored, (
+        "once per session, so a misconfiguration cannot become a reload loop"
+    )
+    # The nav must not carry an entry for the removed assessment page, which is the
+    # symptom this guard exists to stop recurring.
+    assert "公司评估" not in source and "nav.company" not in source
+
+
 if __name__ == "__main__":
     import traceback
 

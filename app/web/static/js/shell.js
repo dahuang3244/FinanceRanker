@@ -37,6 +37,36 @@
   window.location.replace(url.toString());
 })();
 
+/* ------------------------------------------------- stale page, restored from cache
+   Navigating Back can restore a page from the browser's in-memory cache rather than
+   fetching it. That restore does not run any load-time code, so the guard above never
+   sees it and the page keeps the scripts it was first parsed with — which is how a
+   navigation entry removed several builds ago kept reappearing every time someone went
+   back to the ranking and opened another company. Nothing was wrong with the files on
+   disk: the page was a memory image of an older one.
+
+   `pageshow` fires on that restore with `persisted` set. A page whose script carries no
+   build stamp is old regardless — the server has been versioning assets for many builds
+   now — so it is simply re-fetched, once per session so a misconfiguration cannot loop. */
+window.addEventListener("pageshow", (event) => {
+  const meta = document.querySelector('meta[name="fr-build"]');
+  const scripts = document.scripts
+    ? Array.from(document.scripts)
+    : Array.from(document.querySelectorAll ? document.querySelectorAll("script[src]") : []);
+  const versioned = scripts.some((s) => (s.getAttribute("src") || "").includes("?v="));
+  if (versioned && !event.persisted) return;
+  const flag = "fr-restored";
+  try {
+    if (sessionStorage.getItem(flag)) return;
+    sessionStorage.setItem(flag, meta ? meta.content : "no-meta");
+  } catch { return; }
+  // `replace` rather than `reload`: reload would replay the restored entry, while
+  // replace fetches the page afresh and leaves the back button usable.
+  const url = new URL(window.location.href);
+  url.searchParams.set("restored", meta ? meta.content : "1");
+  window.location.replace(url.toString());
+});
+
 const FR = (() => {
   /* ------------------------------------------------------------------ icons */
   const P = {
