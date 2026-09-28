@@ -288,7 +288,12 @@ def test_adjustments_are_netted_on_the_pretax_side_where_possible():
     from app import quarterly as module
 
     source = inspect.getsource(module.quarterly_eps)
-    assert "use_pretax = pretax is not None and tax is not None and pretax > 0" in source
+    assert "use_pretax = pretax is not None and tax is not None" in source
+    assert "use_pretax = pretax is not None and tax is not None and pretax > 0" not in source, (
+        "requiring a positive pre-tax figure excluded loss quarters, and on the one "
+        "that mattered — Intel's March 2026, where add-backs turn a loss into a profit — "
+        "it switched to net income and left the adjustments untaxed"
+    )
     assert 'key="adjusted_tax"' in source, (
         "the tax on adjusted pre-tax income must appear as its own line, or the "
         "derivation cannot be checked against the filing"
@@ -296,6 +301,9 @@ def test_adjustments_are_netted_on_the_pretax_side_where_possible():
     assert "adjusted_income = pretax if use_pretax else net_income" in source, (
         "the pre-tax route must fall back to net income when pre-tax is not tagged"
     )
+    # The tax step applies only to a positive adjusted figure: on a loss the same rate
+    # is a benefit, and adding a charge does the opposite of what the rate means.
+    assert "elif use_pretax and applied and adjusted_income > 0:" in source
 
 
 def test_a_cumulative_may_not_be_combined_across_filings():
@@ -554,6 +562,54 @@ def test_non_operating_income_is_not_removed_twice():
     assert 'if key == "equity_securities_gain" and broad_other:' in source, (
         "the component must be skipped when the total is present"
     )
+
+
+def test_a_share_count_tagged_in_millions_does_not_scale_eps():
+    """McDonald's reports 711.1 where the count is 711,100,000.
+
+    That produced an adjusted EPS of 3,330,052 instead of 3.32, and it passed every
+    consistency check because income divided by that share count genuinely equals the
+    figure shown. GAAP EPS is the witness: it is reported independently, and the share
+    count has to reproduce it.
+
+    The bound is absolute rather than a ratio to GAAP. A ratio catches the unit error
+    but also fires on a legitimate quarter whose GAAP figure is near zero — Pfizer's is
+    -0.04 against an adjusted 1.10 — where a large multiple is simply what a small
+    denominator does. No listed company's quarterly EPS is in the hundreds, so that is
+    the test. Skipped offline.
+    """
+    from app.quarterly import quarterly_eps
+
+    for ticker in ("MCD", "AAPL", "MSFT", "PFE", "INTC"):
+        try:
+            rows = quarterly_eps(ticker, quarters=3)
+        except Exception:  # noqa: BLE001 - offline
+            return
+        for row in rows:
+            if row.adjusted_eps is None:
+                continue
+            assert abs(row.adjusted_eps) < 1000, (
+                f"{ticker} {row.label}: adjusted EPS {row.adjusted_eps} is not a "
+                f"per-share figure — a unit error, not an adjustment"
+            )
+
+
+def test_a_loss_may_become_a_profit_without_being_exaggerated():
+    """Intel's March 2026: a pre-tax loss whose add-backs take it to a profit.
+
+    The pre-tax route must stay available on a loss quarter. Refusing it fell back to
+    net income *and* left the adjustments untaxed, reporting 0.56 where the same
+    arithmetic gives 0.64 — an exaggeration in the direction that flatters.
+    """
+    import inspect
+
+    from app import quarterly as module
+
+    source = inspect.getsource(module.quarterly_eps)
+    assert "and pretax > 0" not in source
+    # And the tax step must not run on a negative adjusted figure, where the rate would
+    # be a benefit and a charge does the opposite of what it means.
+    assert "and adjusted_income > 0:" in source
 
 
 if __name__ == "__main__":

@@ -920,6 +920,22 @@ def quarterly_eps(ticker: str, *, quarters: int = QUARTERS,
                 derived_shares = net_income / gaap_eps
             except ZeroDivisionError:
                 derived_shares = None
+        # A filer may tag its share count in **millions** while tagging income in
+        # dollars, and then income / shares is a million times too large. McDonald's
+        # reports 711.1 where the count is 711,100,000, which produced an adjusted EPS
+        # of 3,330,052 instead of 3.32 — and it survived every consistency check,
+        # because income divided by that share count genuinely equals the figure shown.
+        #
+        # GAAP EPS is the witness: it is reported independently and the share count must
+        # reproduce it. If dividing by a scaled-up count does, the count was in millions.
+        if derived_shares and net_income and gaap_eps:
+            implied = net_income / derived_shares
+            if abs(implied - gaap_eps) > max(0.02, abs(gaap_eps) * 0.05):
+                for scale in (1e6, 1e3):
+                    if abs(net_income / (derived_shares * scale) - gaap_eps) <= max(
+                            0.02, abs(gaap_eps) * 0.05):
+                        derived_shares = derived_shares * scale
+                        break
 
         tax_rate = None
         if tax is not None and pretax:
@@ -935,7 +951,18 @@ def quarterly_eps(ticker: str, *, quarters: int = QUARTERS,
         #
         # Where pre-tax income is not tagged the older route is used, so a filer
         # that tags only net income still gets a figure.
-        use_pretax = pretax is not None and tax is not None and pretax > 0
+        # Where pre-tax income and tax are both tagged the pre-tax route is used, even
+        # on a loss quarter. Excluding a loss looked safer and is wrong in the case that
+        # matters: Intel's March 2026 quarter starts at a pre-tax loss of $3.9bn and its
+        # add-backs of $6.8bn take it to a profit, so refusing the route switched to net
+        # income *and* left the adjustments untaxed, giving an adjusted EPS of 0.56
+        # against the 0.43 the same arithmetic produces properly — a loss turned into a
+        # profit by a rounding of method rather than by the numbers.
+        #
+        # The sign is allowed to fall out of the arithmetic. The tax step below applies
+        # only when the adjusted figure is positive, because on a loss the same rate
+        # would be a benefit and adding a charge does the opposite of what it means.
+        use_pretax = pretax is not None and tax is not None
 
         lines: list[NonGaapLine] = []
         missing: list[str] = []
@@ -1007,10 +1034,17 @@ def quarterly_eps(ticker: str, *, quarters: int = QUARTERS,
                     value=stated.non_deductible_items, is_addback=True,
                     source="8-K exhibit (release text)",
                 ))
-        elif use_pretax and applied:
+        elif use_pretax and applied and adjusted_income > 0:
             # The tax follows the filer's own position. The structural rate is used
             # rather than the quarter's blended one, because a large pre-tax gain
             # inflates the blended rate and would over-tax the removal.
+            #
+            # Only for a positive adjusted income. On a loss quarter the derived tax is
+            # a *benefit* at the same rate, and adding a charge instead does the opposite
+            # of what the rate means: Intel's March 2026 pre-tax loss of $3.9bn gained a
+            # $0.9bn tax expense and its adjusted EPS came out at +0.56 against a GAAP
+            # -0.73, turning a loss into a profit. A loss quarter keeps the net-income
+            # route, where each adjustment is netted at the quarter's own rate.
             rate_for_tax = core_rate if core_rate is not None else tax / pretax
             adjusted_tax = adjusted_income * rate_for_tax
             lines.append(NonGaapLine(
