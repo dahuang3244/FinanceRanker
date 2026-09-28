@@ -213,6 +213,57 @@ def analysis_currency(frame: pd.DataFrame) -> str:
     return str(values.iloc[0]) if not values.empty else ""
 
 
+def currency_code(label: str) -> str:
+    """Map the currency label the feed reports to an ISO code.
+
+    The feed names currencies in Chinese — "丹麦克朗" for the Danish krone — and the
+    rest of the app compares ISO codes. Returning the label unchanged meant a foreign
+    filer's currency never matched "USD", and could not be looked up for conversion
+    either, so the comparison took the wrong branch silently rather than failing.
+
+    An unrecognised label is returned as given, so it stays visibly unmatched instead
+    of being quietly treated as dollars.
+    """
+    text = (label or "").strip()
+    if not text:
+        return "USD"
+    if text.upper() in _ISO_CODES:
+        return text.upper()
+    for name, code in _CURRENCY_NAMES.items():
+        if name in text:
+            return code
+    return text
+
+
+_CURRENCY_NAMES = {
+    "美元": "USD", "美金": "USD",
+    "丹麦克朗": "DKK",
+    "新台币": "TWD", "台币": "TWD",
+    "欧元": "EUR",
+    "英镑": "GBP",
+    "日元": "JPY", "日圆": "JPY",
+    "韩元": "KRW",
+    "瑞郎": "CHF", "瑞士法郎": "CHF",
+    "瑞典克朗": "SEK",
+    "挪威克朗": "NOK",
+    "加元": "CAD", "加拿大元": "CAD",
+    "澳元": "AUD", "澳大利亚元": "AUD",
+    "港元": "HKD", "港币": "HKD",
+    "人民币": "CNY",
+    "新加坡元": "SGD",
+    "印度卢比": "INR",
+    "以色列谢克尔": "ILS",
+    "巴西雷亚尔": "BRL",
+    "墨西哥比索": "MXN",
+}
+
+_ISO_CODES = frozenset({
+    "USD", "DKK", "TWD", "EUR", "GBP", "JPY", "KRW", "CHF", "SEK", "NOK",
+    "CAD", "AUD", "HKD", "CNY", "SGD", "INR", "ILS", "BRL", "MXN", "NZD",
+    "ZAR", "PLN", "TRY", "RUB", "THB", "MYR", "IDR", "PHP", "VND", "CLP",
+})
+
+
 # --------------------------------------------------------------------------- #
 # instance: fetch everything once per ticker
 # --------------------------------------------------------------------------- #
@@ -277,8 +328,7 @@ class TickerData:
         return []
 
     def currency(self) -> str:
-        text = analysis_currency(self.analysis)
-        return {"美元": "USD", "USD": "USD"}.get(text, text or "USD")
+        return currency_code(analysis_currency(self.analysis))
 
     def close(self) -> None:
         for frame in (self._daily, self._analysis, *self._statements.values()):

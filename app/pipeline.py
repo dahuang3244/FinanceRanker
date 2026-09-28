@@ -109,19 +109,30 @@ def fetch_one(
     except Exception as exc:
         log.debug("analyst consensus unavailable for %s: %s", ticker, exc)
 
-    if ticker == "TSM" and fund.currency == "TWD" and quote.currency == "USD":
-        from app.providers.adr import normalize_tsm, normalize_tsm_shares
-        from app.providers.fx import usd_per_twd
+    # Translate a depositary receipt's filing currency into USD before the
+    # cross-sectional comparison, for any receipt whose ADS ratio is known. This was
+    # TSM-only, which is why NVO — filing in DKK and trading in USD — had its price
+    # multiples withheld and left blank while Yahoo publishes them.
+    #
+    # A receipt whose ratio is unknown is deliberately left untranslated: the ratio
+    # cannot be inferred, and guessing it would misstate every multiple by that factor
+    # while looking plausible.
+    if (fund.currency or "USD").upper() != "USD" and (quote.currency or "USD").upper() == "USD":
+        from app.providers.adr import _ADS_RATIO, normalize_depositary
+        from app.providers.fx import usd_per
 
-        fx = usd_per_twd(allow_yahoo=yahoo_usable())
-        if fx is not None:
-            try:
-                fund = normalize_tsm(fund, quote, *fx)
-            except ValueError as exc:
-                log.warning("TSM ADR normalization unavailable: %s", exc)
-                fund = normalize_tsm_shares(fund, quote)
-        else:
-            fund = normalize_tsm_shares(fund, quote)
+        if ticker.upper() in _ADS_RATIO:
+            fx = usd_per((fund.currency.upper(),), allow_yahoo=yahoo_usable())
+            if fx is not None:
+                try:
+                    translated = normalize_depositary(fund, quote, *fx)
+                    if translated is not None:
+                        fund = translated
+                except ValueError as exc:
+                    log.warning("%s ADR normalization unavailable: %s", ticker, exc)
+            else:
+                log.info("%s: no FX rate for %s, price multiples withheld",
+                         ticker, fund.currency)
 
     try:
         row = metrics.compute_row(

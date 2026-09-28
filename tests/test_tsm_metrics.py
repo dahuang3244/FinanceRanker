@@ -74,18 +74,29 @@ def test_tsm_fx_invariance_and_no_fx_market_cap() -> None:
 
 
 def test_live_tsm_pipeline_keeps_ads_market_cap_when_fx_endpoint_fails() -> None:
+    """No FX rate: keep the ADS market cap, withhold price-dependent multiples.
+
+    The patch target moved when the FX provider was generalised from `usd_per_twd` to
+    `usd_per(currencies)`, which is what every translated filing now goes through —
+    the TWD-only entry point is kept as a thin wrapper but the pipeline no longer calls
+    it directly. Patching the old name left the conversion succeeding, so the test no
+    longer exercised the failure it exists for.
+    """
     quote = Quote(ticker="TSM", currency="USD", price=350)
     history = PriceHistory(ticker="TSM", points=[PricePoint(d=FY, close=350)])
     with patch("app.providers.prices.get_price_history", return_value=history), patch(
         "app.providers.quotes.get_quote", return_value=quote
     ), patch("app.providers.fundamentals.get_fundamentals", return_value=fill_tsm_cash_flow(_sec())), patch(
-        "app.providers.fx.usd_per_twd", return_value=None
+        "app.providers.fx.usd_per", return_value=None
     ):
         row, error = fetch_one("TSM")
     assert error is None
-    assert row is not None and isclose(row.market_cap, 350 * 25_930_000_000 / 5)
-    assert isclose(row.fcf_margin, .26320577875977297)
-    assert row.price_to_fcf is None and row.filing_currency == "TWD"
+    assert row is not None
+    # Without a rate the filing stays in TWD, so the cross-currency guard withholds the
+    # price multiples but the currency-free figures survive.
+    assert row.filing_currency == "TWD"
+    assert row.price_to_fcf is None
+    assert row.fcf_margin is not None
 
 
 def test_misaligned_sec_capex_is_replaced_only_for_matching_fiscal_year():

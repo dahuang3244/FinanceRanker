@@ -395,12 +395,41 @@ const FRCompany = (() => {
     </section>`;
   }
 
+  /* The FX line states the pair that was actually converted. */
+  function fxLine(row) {
+    const filing = (row.filing_currency || "").toUpperCase();
+    const trading = (row.currency || "").toUpperCase();
+    if (!filing || filing === trading) return DASH;
+    // The stored rate and its source apply to whichever currency the filing used,
+    // so the pair is named from that rather than assumed to be TWD.
+    const rate = row.fx_usd_per_twd;
+    if (rate === null || rate === undefined) return DASH;
+    return `1 ${filing} = ${Number(rate).toFixed(6)} ${trading || "USD"}; ${row.fx_source || ""}`;
+  }
+
+  /* The provenance note is per company, not one sentence for all of them.
+     It used to name TSM explicitly, so every other ticker's card explained itself
+     with TSM's conversion. A filer whose currency differs from its quote now gets a
+     note naming its own pair and whether an ADS ratio was applied. */
+  function provenanceHint(row) {
+    const filing = (row.filing_currency || "").toUpperCase();
+    const trading = (row.currency || "USD").toUpperCase();
+    if (!filing || filing === trading) return t("co.provenance.hint");
+    const key = (row.share_basis || "").includes("ADS")
+      ? "co.provenance.hintTs"
+      : "co.provenance.hintFx";
+    return t(key, { ticker: row.ticker || "", filing, trading });
+  }
+
   function provenanceBlock(row) {
     const items = [
       [t("co.field.secSource"), row.sec_source || DASH],
       [t("co.field.marketSource"), row.market_source || DASH],
       [t("co.field.filingCurrency"), row.filing_currency || row.currency || DASH],
-      [t("co.field.fxRate"), row.fx_usd_per_twd ? `1 TWD = ${row.fx_usd_per_twd.toFixed(6)} USD; ${row.fx_source || ""}` : DASH],
+      // The FX row names the pair it actually used. It was hardcoded to
+      // "1 TWD = ... USD", so every other converted filer — NVO's DKK, for one —
+      // showed a dash here while the conversion had in fact happened.
+      [t("co.field.fxRate"), fxLine(row)],
       [t("co.field.nongaapSource"), row.non_gaap_source || DASH],
       [t("co.field.quality"), row.source_quality || DASH],
       [t("co.field.shareBasis"), row.share_basis || DASH],
@@ -409,7 +438,7 @@ const FRCompany = (() => {
     return `<section class="glass glass--solid" style="padding:18px 20px">
       <div class="section-head" style="margin-bottom:12px">
         <div><h2 style="font-size:13.5px">${t("co.provenance")}</h2>
-        <p class="hint">${t("co.provenance.hint")}</p></div>
+        <p class="hint">${escapeHtml(provenanceHint(row))}</p></div>
       </div>
       <div class="kvgrid">${items.map(([k, v]) => `
         <div class="kv"><div class="k">${escapeHtml(k)}</div>

@@ -761,7 +761,45 @@ class PreviewBuilder:
         elif diluted_shares:
             shares = diluted_shares
 
-        market_cap = price * shares if (price and shares) else None
+        # ---- market cap, and the currency it is in ----
+        # `price` comes from the quote, in the *trading* currency, while `net` and
+        # `eps` come from the filing, in the reporting currency. For a foreign filer
+        # these differ — NVO reports in DKK and trades in USD — so multiplying them
+        # produces a market cap that is neither, and every multiple built from it is
+        # meaningless. It was also invisible: the figure looked like a number, and the
+        # valuation tiles simply came out blank.
+        #
+        # The price is therefore converted into the reporting currency, which is the
+        # basis the rest of the statement is on, and the rate used is carried so the
+        # payload can say so. With no rate available the market cap is withheld rather
+        # than mixed.
+        market_cap = None
+        fx_note = None
+        reporting_currency = self.data.currency()
+        if price and shares:
+            if reporting_currency and reporting_currency.upper() != "USD":
+                from app.providers.fx import usd_per
+
+                fx = usd_per((reporting_currency.upper(),))
+                if fx is not None:
+                    rate, source = fx
+                    # usd_per gives USD per unit of the foreign currency, so dividing
+                    # converts a USD price into that currency.
+                    market_cap = (price / rate) * shares
+                    fx_note = (f"{reporting_currency} statements and a USD quote: the "
+                               f"price is converted at {rate:.6f} USD per "
+                               f"{reporting_currency} ({source}) before any multiple is "
+                               f"formed; without that rate the multiples are withheld "
+                               f"rather than mixing two currencies")
+                else:
+                    self.warnings.append(
+                        f"{reporting_currency} statements with a USD quote and no FX "
+                        f"rate available: market cap and price multiples withheld"
+                    )
+            else:
+                market_cap = price * shares
+        if fx_note:
+            self.warnings.append(fx_note)
         fcf = (ocf - capex) if (ocf is not None and capex is not None) else None
 
         # ---- per-share bridge ----
